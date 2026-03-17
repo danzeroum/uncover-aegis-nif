@@ -1,0 +1,25 @@
+# Elixir/Mix
+/_build
+/cover
+/deps
+/doc
+/.elixir_ls
+/priv/plts
+erl_crash.dump
+*.beam
+
+# Rust/Cargo (native)
+native/*/target/
+native/*/Cargo.lock
+
+# Compiled NIFs
+*.so
+*.dylib
+*.dll
+priv/native/
+
+# Editor
+.DS_Store
+.vscode/
+*.swp
+*.swo

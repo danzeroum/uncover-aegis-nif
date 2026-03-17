@@ -14,8 +14,8 @@ config :uncover_aegis, UncoverAegis.Repo,
 config :uncover_aegis, ecto_repos: [UncoverAegis.Repo]
 
 # --- MVP 4: Phoenix Endpoint (Bandit, sem pipeline de assets) ---
-# CDN-first: Tailwind e Phoenix JS carregados via CDN no layout.
-# secret_key_base de 64+ chars (obrigatorio pelo Phoenix).
+# secret_key_base DEVE ter no minimo 64 bytes (512 bits).
+# Plug.Session/cookie valida este requisito em runtime.
 config :uncover_aegis, UncoverAegisWeb.Endpoint,
   url: [host: "localhost"],
   http: [ip: {0, 0, 0, 0}, port: 4000],
@@ -25,8 +25,8 @@ config :uncover_aegis, UncoverAegisWeb.Endpoint,
     layout: false
   ],
   pubsub_server: UncoverAegis.PubSub,
-  live_view: [signing_salt: "aegis_lv_salt_12345"],
+  live_view: [signing_salt: "aegis_lv_signing_salt_mvp4_2025"],
   secret_key_base:
-    "Hq3mEp8VnLr2TsKjYwXoZcBfDuGaIyNvOdAkCpMtQlRhJeUbWiSgFxPzEoNaYqT"
+    "Hq3mEp8VnLr2TsKjYwXoZcBfDuGaIyNvOdAkCpMtQlRhJeUbWiSgFxPzEoNaYqT9R7mK1wB5vD4nQ2sL6hA8jU0"
 
 import_config "#{config_env()}.exs"

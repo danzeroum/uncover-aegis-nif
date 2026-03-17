@@ -4,7 +4,7 @@ defmodule UncoverAegis.MixProject do
   def project do
     [
       app: :uncover_aegis,
-      version: "0.2.0",
+      version: "0.3.0",
       elixir: "~> 1.14",
       start_permanent: Mix.env() == :prod,
       deps: deps(),
@@ -27,17 +27,23 @@ defmodule UncoverAegis.MixProject do
       {:rustler, "~> 0.36.0"},
 
       # Banco de dados SQLite leve para demonstracao e testes
-      # Sem necessidade de instalar PostgreSQL externo
       {:ecto_sqlite3, "~> 0.18.0"},
-      {:ecto_sql, "~> 3.11"}
+      {:ecto_sql, "~> 3.11"},
+
+      # --- MVP 4: Web e LiveView ---
+      # Phoenix 1.7 + LiveView 0.20 sem pipeline de assets (CDN)
+      {:phoenix, "~> 1.7.11"},
+      {:phoenix_live_view, "~> 0.20.14"},
+      {:bandit, "~> 1.0"},
+      {:jason, "~> 1.4"}
     ]
   end
 
   defp aliases do
     [
       # Prepara o ambiente de teste criando e migrando o banco em memoria
-      "test.setup": ["ecto.create", "ecto.migrate"],
-      "test": ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
+      setup: ["deps.get", "ecto.create", "ecto.migrate"],
+      test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
     ]
   end
 end

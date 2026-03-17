@@ -1,35 +1,36 @@
 defmodule UncoverAegis.Application do
   @moduledoc """
-  Árvore de Supervisão OTP do Uncover Aegis.
+  Arvore de Supervisao OTP do Uncover Aegis.
 
-  Gerencia o ciclo de vida de todos os processos segundo a filosofia
-  "Let it crash" do Erlang/OTP: falhas isoladas são reiniciadas
-  automaticamente sem derrubar o sistema inteiro.
+  ## Processos supervisionados (em ordem de inicializacao)
 
-  ## Processos supervisionados (em ordem de inicialização)
+  1. `UncoverAegis.Repo` — pool de conexoes Ecto com o banco SQLite.
+  2. `UncoverAegis.Sentinel.DynamicSupervisor` — supervisor dinamico
+     que gerencia um CampaignMonitor (GenServer) por campanha ativa.
+  3. `Phoenix.PubSub` — barramento de mensagens que conecta o MVP3
+     ao LiveView em tempo real.
+  4. `UncoverAegisWeb.Endpoint` — servidor HTTP/WebSocket via Bandit.
 
-  1. `UncoverAegis.Repo` — pool de conexões Ecto com o banco SQLite.
-     Deve ser iniciado primeiro: outros módulos dependem do banco.
+  ## Estrategia: :one_for_one
 
-  2. `UncoverAegis.Sentinel.DynamicSupervisor` — supervisor dinâmico
-     que gerencia um `CampaignMonitor` (GenServer) por campanha ativa.
-     Iniciado após o Repo pois monitores futuros podem persistir alertas.
-
-  ## Estratégia: `:one_for_one`
-
-  Se o Repo ou o Sentinel falharem, apenas o processo afetado é reiniciado.
-  Não há dependência de restart entre eles.
+  Falhas sao isoladas: crash num modulo nao reinicia os outros.
   """
   use Application
 
   @impl true
   def start(_type, _args) do
     children = [
-      # 1. Repositório Ecto: pool de conexões SQLite (MVP 2)
+      # 1. Repositorio Ecto: pool de conexoes SQLite (MVP 2)
       UncoverAegis.Repo,
 
-      # 2. Supervisor dinâmico do Sentinel: 1 GenServer por campanha (MVP 3)
-      UncoverAegis.Sentinel.DynamicSupervisor
+      # 2. Supervisor dinamico do Sentinel: 1 GenServer por campanha (MVP 3)
+      UncoverAegis.Sentinel.DynamicSupervisor,
+
+      # 3. Barramento de eventos: conecta MVP3 -> LiveView (MVP 4)
+      {Phoenix.PubSub, name: UncoverAegis.PubSub},
+
+      # 4. Servidor web Phoenix (MVP 4)
+      UncoverAegisWeb.Endpoint
     ]
 
     opts = [strategy: :one_for_one, name: UncoverAegis.Supervisor]

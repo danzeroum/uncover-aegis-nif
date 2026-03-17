@@ -1,0 +1,25 @@
+[package]
+name = "aegis_core"
+version = "0.1.0"
+edition = "2021"
+
+# A crate-type "cdylib" gera uma biblioteca dinâmica (.so / .dylib / .dll)
+# que será carregada em tempo de execução pelo Elixir via NIF loader.
+[lib]
+name = "aegis_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+# Rustler: ponte segura entre Rust e a BEAM (Erlang VM)
+rustler = "0.36.1"
+
+# regex: implementa DFA (autômato finito determinístico),
+# garantindo tempo linear O(n) — sem backtracking catastrófico
+# como em PCRE/Python/Ruby. Fundamental para Dirty NIFs.
+regex = "1.11"
+
+[profile.release]
+# Otimizações máximas para produção
+opt-level = 3
+lto = true
+codegen-units = 1

@@ -4,6 +4,10 @@ defmodule UncoverAegisWeb.InsightsLive do
 
   ## Arquitetura
 
+  - **Streams**: usa `stream/3` do LiveView 0.20+ para insercao incremental
+    de mensagens sem re-renderizar toda a lista. Substitui o depreciado
+    `phx-update="append"`.
+
   - **Assincrono por design**: `handle_event/3` nao chama o LLM/banco
     diretamente. Ele enfileira a mensagem e retorna imediatamente,
     evitando que o processo LiveView fique bloqueado (congelando a UI
@@ -23,7 +27,6 @@ defmodule UncoverAegisWeb.InsightsLive do
 
   alias UncoverAegis.Insights
 
-  # Perguntas de exemplo exibidas na UI como atalhos de UX
   @example_questions [
     "qual o gasto total?",
     "quais campanhas tiveram mais cliques?",
@@ -35,17 +38,18 @@ defmodule UncoverAegisWeb.InsightsLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    # Assina o topico de anomalias do MVP3 apenas em conexoes reais
     if connected?(socket) do
       Phoenix.PubSub.subscribe(UncoverAegis.PubSub, "anomalies")
     end
 
     {:ok,
-     assign(socket,
-       messages: [],
+     socket
+     |> stream(:messages, [])
+     |> assign(
        current_input: "",
        anomaly_alert: nil,
        loading: false,
+       has_messages: false,
        example_questions: @example_questions
      )}
   end
@@ -61,23 +65,20 @@ defmodule UncoverAegisWeb.InsightsLive do
     if msg == "" do
       {:noreply, socket}
     else
-      # Adiciona mensagem do usuario e placeholder de loading
-      messages =
-        socket.assigns.messages ++
-          [
-            %{id: System.unique_integer([:positive]), role: :user, content: msg},
-            %{id: System.unique_integer([:positive]), role: :assistant, content: nil, loading: true}
-          ]
+      user_msg = %{id: "msg-#{System.unique_integer([:positive])}", role: :user, content: msg}
+      loading_msg = %{id: "msg-#{System.unique_integer([:positive])}", role: :assistant, content: nil, loading: true}
 
-      # Processamento assincrono: nao bloqueia o processo LiveView
-      send(self(), {:process_question, msg})
+      send(self(), {:process_question, msg, loading_msg.id})
 
-      {:noreply, assign(socket, messages: messages, current_input: "", loading: true)}
+      {:noreply,
+       socket
+       |> stream_insert(:messages, user_msg)
+       |> stream_insert(:messages, loading_msg)
+       |> assign(current_input: "", loading: true, has_messages: true)}
     end
   end
 
   def handle_event("use_example", %{"question" => question}, socket) do
-    # Atalho: clique numa pergunta de exemplo preenche o campo
     {:noreply, assign(socket, :current_input, question)}
   end
 
@@ -86,50 +87,34 @@ defmodule UncoverAegisWeb.InsightsLive do
   end
 
   # ---------------------------------------------------------------------------
-  # Mensagens internas (processamento assincrono e PubSub)
+  # Mensagens internas
   # ---------------------------------------------------------------------------
 
   @impl true
-  def handle_info({:process_question, question}, socket) do
-    # Este handle_info roda no mesmo processo LiveView mas fora do
-    # ciclo de request/response do usuario — UI ja foi atualizada.
+  def handle_info({:process_question, question, loading_id}, socket) do
     response_msg =
       case Insights.ask(question) do
         {:ok, result} ->
           format_success(result)
 
         {:error, :llm, reason} ->
-          %{
-            role: :assistant,
-            content: reason,
-            status: :not_understood,
-            icon: "\u{1F4AC}"
-          }
+          %{role: :assistant, content: reason, status: :not_understood, icon: "\u{1F4AC}"}
 
         {:error, :guardrail, reason} ->
-          %{
-            role: :assistant,
-            content: reason,
-            status: :blocked,
-            icon: "\u{1F534}"
-          }
+          %{role: :assistant, content: reason, status: :blocked, icon: "\u{1F534}"}
 
         {:error, :database, reason} ->
-          %{
-            role: :assistant,
-            content: reason,
-            status: :error,
-            icon: "\u26A0\uFE0F"
-          }
+          %{role: :assistant, content: reason, status: :error, icon: "\u26A0\uFE0F"}
       end
 
-    # Remove o placeholder de loading e adiciona a resposta real
-    messages =
-      socket.assigns.messages
-      |> Enum.reject(&Map.get(&1, :loading, false))
-      |> Kernel.++([Map.put(response_msg, :id, System.unique_integer([:positive]))])
+    # Remove placeholder de loading e insere resposta real
+    final_msg = Map.put(response_msg, :id, "msg-#{System.unique_integer([:positive])}")
 
-    {:noreply, assign(socket, messages: messages, loading: false)}
+    {:noreply,
+     socket
+     |> stream_delete_by_dom_id(:messages, loading_id)
+     |> stream_insert(:messages, final_msg)
+     |> assign(:loading, false)}
   end
 
   # Alerta em tempo real do MVP3 via PubSub
@@ -158,15 +143,13 @@ defmodule UncoverAegisWeb.InsightsLive do
             <h1 class="text-xl font-bold text-gray-900">\u{1F6E1}\uFE0F Uncover Aegis</h1>
             <p class="text-xs text-gray-500 mt-0.5">CMO Copilot — Insights seguros em tempo real</p>
           </div>
-          <div class="flex items-center gap-2">
-            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-              \u2022 Guardrail Rust Ativo
-            </span>
-          </div>
+          <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
+            \u2022 Guardrail Rust Ativo
+          </span>
         </div>
       </div>
 
-      <%# Alerta de anomalia do MVP3 (aparece em tempo real via PubSub) %>
+      <%# Alerta de anomalia do MVP3 (PubSub real-time) %>
       <div
         :if={@anomaly_alert}
         class="mx-4 mt-3 p-3 bg-red-50 border border-red-300 rounded-lg flex items-start justify-between"
@@ -182,23 +165,16 @@ defmodule UncoverAegisWeb.InsightsLive do
             </p>
           </div>
         </div>
-        <button
-          phx-click="dismiss_alert"
-          class="text-red-400 hover:text-red-600 text-sm ml-2 mt-0.5"
-        >
+        <button phx-click="dismiss_alert" class="text-red-400 hover:text-red-600 text-sm ml-2 mt-0.5">
           \u2715
         </button>
       </div>
 
-      <%# Area de mensagens %>
-      <div
-        id="messages"
-        class="flex-1 overflow-y-auto p-4 space-y-3"
-        phx-update="append"
-      >
-        <%# Mensagem de boas-vindas inicial %>
+      <%# Area de mensagens com LiveView Streams %>
+      <div class="flex-1 overflow-y-auto p-4">
+        <%# Tela de boas-vindas (visivel enquanto nao ha mensagens) %>
         <div
-          :if={@messages == []}
+          :if={not @has_messages}
           class="flex flex-col items-center justify-center h-full text-center py-12"
         >
           <div class="text-5xl mb-4">\u{1F4CA}</div>
@@ -219,39 +195,41 @@ defmodule UncoverAegisWeb.InsightsLive do
           </div>
         </div>
 
-        <%# Mensagens do chat %>
-        <div :for={msg <- @messages} id={"msg-#{msg.id}"} class={message_wrapper_class(msg.role)}>
-          <div class={message_bubble_class(msg)}>
-            <%# Indicador de loading %>
-            <div :if={Map.get(msg, :loading, false)} class="flex items-center gap-2">
-              <svg class="animate-spin h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-              </svg>
-              <span class="text-sm text-gray-500">Validando pelo escudo Rust...</span>
-            </div>
+        <%# Stream de mensagens %>
+        <div id="messages" phx-update="stream" class="space-y-3">
+          <div :for={{dom_id, msg} <- @streams.messages} id={dom_id} class={message_wrapper_class(msg.role)}>
+            <div class={message_bubble_class(msg)}>
+              <%# Spinner de loading %>
+              <div :if={Map.get(msg, :loading, false)} class="flex items-center gap-2">
+                <svg class="animate-spin h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none">
+                  <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                  <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+                <span class="text-sm text-gray-500">Validando pelo escudo Rust...</span>
+              </div>
 
-            <%# Conteudo da mensagem %>
-            <p :if={not Map.get(msg, :loading, false)} class="text-sm whitespace-pre-wrap">
-              <span :if={msg[:icon]} class="mr-1"><%= msg.icon %></span><%= msg.content %>
-            </p>
+              <%# Conteudo %>
+              <p :if={not Map.get(msg, :loading, false)} class="text-sm whitespace-pre-wrap">
+                <span :if={msg[:icon]} class="mr-1"><%= msg.icon %></span><%= msg.content %>
+              </p>
 
-            <%# Metadados (so para respostas do assistente bem-sucedidas) %>
-            <div :if={msg[:metadata]} class="mt-2 pt-2 border-t border-gray-200 space-y-1">
-              <p class="text-xs text-gray-400">
-                \u{1F7E2} Guardrail Rust: <strong><%= msg.metadata.guardrail_us %>µs</strong>
-                &nbsp;|&nbsp; Query: <strong><%= msg.metadata.query_ms %>ms</strong>
-                &nbsp;|&nbsp; <%= msg.metadata.row_count %> linha(s)
-              </p>
-              <p class="text-xs font-mono text-gray-400 truncate" title={msg.metadata.sql}>
-                SQL: <%= msg.metadata.sql %>
-              </p>
+              <%# Metadados de observabilidade %>
+              <div :if={msg[:metadata]} class="mt-2 pt-2 border-t border-gray-200 space-y-1">
+                <p class="text-xs text-gray-400">
+                  \u{1F7E2} Guardrail Rust: <strong><%= msg.metadata.guardrail_us %>µs</strong>
+                  &nbsp;|&nbsp; Query: <strong><%= msg.metadata.query_ms %>ms</strong>
+                  &nbsp;|&nbsp; <%= msg.metadata.row_count %> linha(s)
+                </p>
+                <p class="text-xs font-mono text-gray-400 truncate" title={msg.metadata.sql}>
+                  SQL: <%= msg.metadata.sql %>
+                </p>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      <%# Input de envio %>
+      <%# Input %>
       <div class="px-4 pb-4 pt-2 bg-white border-t border-gray-100">
         <form phx-submit="send_message" class="flex gap-2">
           <input
@@ -272,7 +250,7 @@ defmodule UncoverAegisWeb.InsightsLive do
           </button>
         </form>
         <p class="text-xs text-gray-400 mt-1.5 text-center">
-          Toda query e validada pelo Aegis-Rust antes de tocar o banco.
+          Toda query é validada pelo Aegis-Rust antes de tocar o banco.
         </p>
       </div>
     </div>

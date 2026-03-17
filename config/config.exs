@@ -13,13 +13,14 @@ config :uncover_aegis, UncoverAegis.Repo,
 
 config :uncover_aegis, ecto_repos: [UncoverAegis.Repo]
 
-# --- MVP 4: Phoenix Endpoint (Bandit, sem pipeline de assets) ---
-# secret_key_base DEVE ter no minimo 64 bytes (512 bits).
-# Plug.Session/cookie valida este requisito em runtime.
+# --- MVP 4: Phoenix Endpoint ---
+# check_origin: false permite acesso via IP publico ou qualquer host
+# em ambiente de demonstracao. Em producao usar dominio fixo.
 config :uncover_aegis, UncoverAegisWeb.Endpoint,
   url: [host: "localhost"],
   http: [ip: {0, 0, 0, 0}, port: 4000],
   adapter: Bandit.PhoenixAdapter,
+  check_origin: false,
   render_errors: [
     formats: [html: UncoverAegisWeb.ErrorHTML],
     layout: false

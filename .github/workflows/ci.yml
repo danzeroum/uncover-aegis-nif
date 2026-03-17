@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+env:
+  MIX_ENV: test
+
+jobs:
+  test:
+    name: "Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}"
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.16"
+            otp: "26"
+          - elixir: "1.17"
+            otp: "27"
+
+    steps:
+      - name: "📲 Checkout"
+        uses: actions/checkout@v4
+
+      # --- Rust -----------------------------------------------------------
+      - name: "🦵 Instalar Rust (stable)"
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: "🗂️ Cache Cargo"
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native/aegis_core/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native/aegis_core/Cargo.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      # --- Elixir / OTP ---------------------------------------------------
+      - name: "📜 Instalar Elixir ${{ matrix.elixir }} / OTP ${{ matrix.otp }}"
+        uses: erlef/setup-beam@v1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - name: "🗂️ Cache Mix deps"
+        uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+          key: ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-${{ hashFiles('mix.exs', 'mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-${{ matrix.elixir }}-${{ matrix.otp }}-
+
+      # --- Build ----------------------------------------------------------
+      - name: "📦 Instalar dependências"
+        run: mix deps.get
+
+      - name: "🔨 Compilar (Elixir + Cargo)"
+        run: mix compile --warnings-as-errors
+        # O Rustler invoca automaticamente `cargo build` durante mix compile.
+        # A crate aegis_core é compilada aqui.
+
+      # --- Quality --------------------------------------------------------
+      - name: "🔍 Verificar formatação Elixir"
+        run: mix format --check-formatted
+
+      - name: "🦀 Clippy (Rust linter)"
+        run: cargo clippy --manifest-path native/aegis_core/Cargo.toml -- -D warnings
+
+      # --- Tests ----------------------------------------------------------
+      - name: "✅ Rodar testes ExUnit"
+        run: mix test --trace
+        # --trace: exibe cada teste individualmente para facilitar debug no CI

@@ -1,9 +1,9 @@
 defmodule UncoverAegisWeb do
   @moduledoc """
-  Contexto web do Uncover Aegis (MVP 4).
+  Contexto web do Uncover Aegis.
 
-  Centraliza os `use` para LiveView e Router, seguindo o padrao
-  Phoenix 1.7 sem o helper legado `Phoenix.LiveView.Helpers`.
+  Centraliza os `use` para LiveView, Controller e Router,
+  seguindo o padrao Phoenix 1.7.
   """
 
   def router do
@@ -15,10 +15,27 @@ defmodule UncoverAegisWeb do
     end
   end
 
+  def controller do
+    quote do
+      use Phoenix.Controller,
+        formats: [:html, :json],
+        layouts: [html: {UncoverAegisWeb.Layouts, :app}]
+
+      import Plug.Conn
+      alias UncoverAegisWeb.Router.Helpers, as: Routes
+    end
+  end
+
   def live_view do
     quote do
       use Phoenix.LiveView, layout: {UncoverAegisWeb.Layouts, :app}
       unquote(html_helpers())
+    end
+  end
+
+  def channel do
+    quote do
+      use Phoenix.Channel
     end
   end
 

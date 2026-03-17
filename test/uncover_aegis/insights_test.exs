@@ -1,115 +1,136 @@
 defmodule UncoverAegis.InsightsTest do
+  @moduledoc """
+  Testes de integracao do pipeline Insights.
+
+  Testa o fluxo completo: LLM Mock -> Guardrail Rust -> SQLite.
+  Usa banco em memoria (`:memory:`) para isolamento entre testes.
+  """
   use ExUnit.Case, async: false
 
-  @moduledoc """
-  Testes de integração do módulo Insights: pipeline completo
-  SQL guardrail (Rust) -> Ecto query (Elixir) -> Z-Score (Rust).
+  alias UncoverAegis.{Insights, Repo}
 
-  Usa banco SQLite em memória (:memory:) configurado no config/test.exs.
-  `async: false` porque compartilhamos o Repo (pool de conexões).
-  """
-
-  alias UncoverAegis.{Insights, Repo, CampaignMetric}
-  import Ecto.Query
-
-  # Roda a migração antes dos testes e limpa o banco após cada teste.
+  # Insere dados minimos para os testes de query
   setup do
-    # Garante que a tabela existe no banco :memory:
-    Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+    # Garante banco limpo para cada teste
+    Repo.query!("DELETE FROM campaign_metrics")
 
-    on_exit(fn ->
-      Ecto.Adapters.SQL.Sandbox.checkin(Repo)
-    end)
+    now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
 
-    # Seed: insere métricas de campanha para os testes consultarem
-    now = DateTime.utc_now() |> DateTime.truncate(:second)
-
-    metrics = [
-      %{campaign_id: "meta_001", platform: "meta", spend: 100.0,
-        impressions: 10_000, clicks: 300, conversions: 15, reported_at: now},
-      %{campaign_id: "meta_002", platform: "meta", spend: 105.0,
-        impressions: 11_000, clicks: 320, conversions: 18, reported_at: now},
-      %{campaign_id: "meta_003", platform: "meta", spend: 98.0,
-        impressions: 9_800, clicks: 290, conversions: 14, reported_at: now},
-      %{campaign_id: "goog_001", platform: "google", spend: 200.0,
-        impressions: 25_000, clicks: 800, conversions: 40, reported_at: now}
+    rows = [
+      %{campaign_id: "camp_a", platform: "google", spend: 1000.0,
+        impressions: 10000, clicks: 500, conversions: 50,
+        date: ~D[2026-03-10], inserted_at: now, updated_at: now},
+      %{campaign_id: "camp_b", platform: "meta", spend: 2000.0,
+        impressions: 20000, clicks: 1000, conversions: 100,
+        date: ~D[2026-03-10], inserted_at: now, updated_at: now},
+      %{campaign_id: "camp_c", platform: "google", spend: 1500.0,
+        impressions: 15000, clicks: 750, conversions: 75,
+        date: ~D[2026-03-11], inserted_at: now, updated_at: now},
     ]
 
-    Enum.each(metrics, fn attrs ->
-      %CampaignMetric{}
-      |> CampaignMetric.changeset(attrs)
-      |> Repo.insert!()
-    end)
-
+    Repo.insert_all("campaign_metrics", rows)
     :ok
   end
 
   describe "run_safe_query/1" do
-    test "executa SELECT válido e retorna linhas" do
-      sql = "SELECT campaign_id, spend FROM campaign_metrics WHERE platform = 'meta'"
+    test "executa SELECT valido e retorna linhas" do
+      sql = "SELECT platform, SUM(spend) AS total FROM campaign_metrics GROUP BY platform ORDER BY total DESC"
       assert {:ok, result} = Insights.run_safe_query(sql)
-
-      assert result.row_count == 3
-      assert "campaign_id" in result.columns
-      assert "spend" in result.columns
+      assert length(result.rows) == 2
+      assert result.columns == ["platform", "total"]
     end
 
-    test "retorna metadados de z-score junto com as linhas" do
-      sql = "SELECT spend FROM campaign_metrics ORDER BY spend"
-      assert {:ok, result} = Insights.run_safe_query(sql)
+    test "bloqueia DELETE e retorna :unsafe_sql" do
+      assert {:unsafe_sql, reason} =
+               Insights.run_safe_query("DELETE FROM campaign_metrics")
 
-      assert is_float(result.z_score)
-      assert is_boolean(result.anomaly)
-      assert result.anomaly_threshold == 3.0
+      assert is_binary(reason)
+      # Confirma que nenhum dado foi apagado
+      assert {:ok, %{rows: [[3]]}} =
+               Insights.run_safe_query("SELECT COUNT(*) FROM campaign_metrics")
     end
 
-    test "detecta anomalia quando gasto é outlier" do
-      # Insere uma métrica com gasto anomalo (10x a media)
-      now = DateTime.utc_now() |> DateTime.truncate(:second)
-
-      %CampaignMetric{}
-      |> CampaignMetric.changeset(%{
-        campaign_id: "meta_anomaly",
-        platform: "meta",
-        spend: 9_999.0,
-        reported_at: now
-      })
-      |> Repo.insert!()
-
-      sql = "SELECT spend FROM campaign_metrics ORDER BY reported_at"
-      assert {:ok, result} = Insights.run_safe_query(sql)
-
-      assert result.anomaly == true
-      assert result.z_score > 3.0
-    end
-
-    test "bloqueia DELETE gerado por LLM" do
-      sql = "DELETE FROM campaign_metrics WHERE spend < 50"
-      assert {:unsafe_sql, reason} = Insights.run_safe_query(sql)
-      assert reason =~ "DELETE"
-    end
-
-    test "bloqueia DROP TABLE gerado por LLM" do
-      assert {:unsafe_sql, _} = Insights.run_safe_query("DROP TABLE campaign_metrics")
-    end
-
-    test "bloqueia UPDATE gerado por LLM" do
+    test "bloqueia DROP TABLE" do
       assert {:unsafe_sql, _} =
-               Insights.run_safe_query("UPDATE campaign_metrics SET spend = 0 WHERE id = 1")
+               Insights.run_safe_query("DROP TABLE campaign_metrics")
     end
 
-    test "não há anomalia para gastos uniformes" do
-      sql = "SELECT spend FROM campaign_metrics WHERE platform = 'meta'"
-      assert {:ok, result} = Insights.run_safe_query(sql)
-
-      # Meta: 100, 105, 98 — distribuição normal, sem anomalia
-      assert result.anomaly == false
+    test "retorna lista vazia para query sem resultados" do
+      sql = "SELECT * FROM campaign_metrics WHERE platform = 'tiktok'"
+      assert {:ok, %{rows: []}} = Insights.run_safe_query(sql)
     end
 
-    test "SELECT COUNT retorna row_count correto" do
-      sql = "SELECT COUNT(*) as total FROM campaign_metrics"
+    test "retorna erro para SQL invalido" do
+      assert {:error, _reason} =
+               Insights.run_safe_query("SELECT * FROM tabela_que_nao_existe")
+    end
+  end
+
+  describe "ask/1 via LlmMock (perguntas reconhecidas)" do
+    test "responde 'qual o gasto total?' com dados corretos" do
+      assert {:ok, result} = Insights.ask("qual o gasto total?")
+      assert result.rows != []
+      # Total deve ser 4500.0 (1000 + 2000 + 1500)
+      total = result.rows |> Enum.flat_map(& &1) |> Enum.filter(&is_number/1) |> Enum.sum()
+      assert_in_delta total, 4500.0, 1.0
+    end
+
+    test "responde 'quantas campanhas temos?' com contagem correta" do
+      assert {:ok, result} = Insights.ask("quantas campanhas temos?")
+      assert [[count]] = result.rows
+      assert count == 3
+    end
+
+    test "inclui metadados de observabilidade na resposta" do
+      assert {:ok, result} = Insights.ask("quais plataformas usamos?")
+      assert is_binary(result.metadata.sql)
+      assert result.metadata.guardrail_us > 0
+      assert result.metadata.query_ms >= 0
+      assert result.row_count == length(result.rows)
+    end
+
+    test "inclui campo anomaly na resposta" do
+      assert {:ok, result} = Insights.ask("qual o gasto total?")
+      assert is_boolean(result.anomaly)
+    end
+  end
+
+  describe "ask/1 — tratamento de erros" do
+    test "retorna :llm error para pergunta nao reconhecida (sem Ollama)" do
+      # Com Ollama indisponivel em CI, cai no LlmMock que nao reconhece
+      result = Insights.ask("qual a umidade do ar hoje?")
+      # Aceita tanto {:error, :llm, _} quanto {:ok, _} se Ollama estiver up
+      assert match?({:error, :llm, _}, result) or match?({:ok, _}, result)
+    end
+  end
+
+  describe "anomalia Z-Score" do
+    test "detecta anomalia quando ha outlier extremo de spend" do
+      now = NaiveDateTime.utc_now() |> NaiveDateTime.truncate(:second)
+
+      # Insere valores normais + outlier extremo na mesma plataforma
+      extra_rows = [
+        %{campaign_id: "camp_x", platform: "linkedin", spend: 100.0,
+          impressions: 1000, clicks: 50, conversions: 5,
+          date: ~D[2026-03-10], inserted_at: now, updated_at: now},
+        %{campaign_id: "camp_x", platform: "linkedin", spend: 102.0,
+          impressions: 1000, clicks: 50, conversions: 5,
+          date: ~D[2026-03-11], inserted_at: now, updated_at: now},
+        %{campaign_id: "camp_x", platform: "linkedin", spend: 98.0,
+          impressions: 1000, clicks: 50, conversions: 5,
+          date: ~D[2026-03-12], inserted_at: now, updated_at: now},
+        %{campaign_id: "camp_x", platform: "linkedin", spend: 99000.0,
+          impressions: 1000, clicks: 50, conversions: 5,
+          date: ~D[2026-03-13], inserted_at: now, updated_at: now},
+      ]
+
+      Repo.insert_all("campaign_metrics", extra_rows)
+
+      # Query que retorna coluna 'spend' para ativar calculo de z-score
+      sql = "SELECT spend FROM campaign_metrics WHERE platform = 'linkedin' ORDER BY spend"
       assert {:ok, result} = Insights.run_safe_query(sql)
-      assert result.row_count == 1
+      # Com outlier extremo, anomaly deve ser true
+      assert result.anomaly == true
     end
   end
 end

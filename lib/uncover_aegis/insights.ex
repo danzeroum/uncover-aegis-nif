@@ -1,31 +1,21 @@
 defmodule UncoverAegis.Insights do
   @moduledoc """
-  Orquestra a geracao segura de insights de campanhas combinando:
+  Orquestra a geracao segura de insights de campanhas.
 
-  1. **LlmMock** (MVP4): converte pergunta em linguagem natural para SQL.
+  ## Pipeline NL->SQL (ask/1)
 
-  2. **SQL Guardrail (Rust)**: valida que a query gerada pelo LLM e somente
-     de leitura antes de executar no banco.
-
-  3. **Ecto Query (Elixir)**: executa a query validada no SQLite com
-     o pool de conexoes gerenciado pelo Supervisor OTP.
-
-  4. **Z-Score Anomaly Detection (Rust)**: calcula o desvio estatistico
-     dos gastos retornados, alertando quando um valor e anomalia.
-
-  ## Fluxos
-
-  ### ask/1 (MVP4 — pergunta em linguagem natural)
   ```
   Pergunta (NL)
-    -> LlmMock.generate_sql/1
-    -> Native.validate_read_only_sql/1  <- Rust guardrail
+    -> OllamaClient.generate_sql/1   <- LLM real (qwen2.5-coder:7b)
+    -> [fallback LlmMock se Ollama indisponivel]
+    -> Native.validate_read_only_sql/1  <- Guardrail Rust
     -> Repo.query/2                      <- Ecto SQLite
-    -> Native.calculate_zscore/1         <- Rust z-score
+    -> Native.calculate_zscore/1         <- Z-Score Rust
     -> {:ok, %{rows, columns, z_score, anomaly, metadata}}
   ```
 
-  ### run_safe_query/1 (MVP2 — SQL direto)
+  ## Pipeline SQL direto (run_safe_query/1)
+
   ```
   SQL
     -> Native.validate_read_only_sql/1
@@ -36,7 +26,9 @@ defmodule UncoverAegis.Insights do
   """
 
   alias UncoverAegis.{Native, Repo}
-  alias UncoverAegis.Insights.LlmMock
+  alias UncoverAegis.Insights.{LlmMock, OllamaClient}
+
+  require Logger
 
   @zscore_threshold 3.0
 
@@ -45,26 +37,12 @@ defmodule UncoverAegis.Insights do
   # ---------------------------------------------------------------------------
 
   @doc """
-  Aceita uma pergunta em linguagem natural, gera SQL via LLM, valida
-  com o guardrail Rust, executa no banco e retorna resultado + metadados.
-
-  ## Retorno
-
-      {:ok, %{
-        rows: list(),
-        columns: list(),
-        z_score: float(),
-        anomaly: boolean(),
-        metadata: %{sql: String.t(), guardrail_us: integer(), query_ms: integer()}
-      }}
-      {:error, atom(), String.t()}
-
+  Aceita uma pergunta em linguagem natural, gera SQL via Ollama
+  (com fallback para LlmMock), valida com guardrail Rust e executa.
   """
-  @spec ask(String.t()) ::
-          {:ok, map()}
-          | {:error, atom(), String.t()}
+  @spec ask(String.t()) :: {:ok, map()} | {:error, atom(), String.t()}
   def ask(question) when is_binary(question) do
-    with {:ok, sql} <- LlmMock.generate_sql(question),
+    with {:ok, sql} <- resolve_sql(question),
          {:ok, validated_sql, guardrail_us} <- validate_with_timing(sql),
          {:ok, result, query_ms} <- execute_with_timing(validated_sql) do
       {z_score, anomaly} = analyze_spends(extract_spends(result))
@@ -86,6 +64,9 @@ defmodule UncoverAegis.Insights do
       {:error, :not_understood} ->
         {:error, :llm, "Pergunta nao reconhecida. Tente: 'qual o gasto total?'"}
 
+      {:error, :cannot_answer} ->
+        {:error, :llm, "Nao consegui gerar SQL para esta pergunta. Tente reformular."}
+
       {:error, :validation, reason} ->
         {:error, :guardrail, reason}
 
@@ -95,32 +76,45 @@ defmodule UncoverAegis.Insights do
   end
 
   # ---------------------------------------------------------------------------
-  # MVP 2 — SQL direto (mantido para compatibilidade)
+  # MVP 2 — SQL direto (mantido para modo SQL da UI)
   # ---------------------------------------------------------------------------
 
-  @doc """
-  Executa uma query SQL (geralmente gerada por LLM) de forma segura.
-  """
   @spec run_safe_query(String.t()) ::
-          {:ok, map()}
-          | {:error, String.t()}
-          | {:unsafe_sql, String.t()}
+          {:ok, map()} | {:error, String.t()} | {:unsafe_sql, String.t()}
   def run_safe_query(sql) when is_binary(sql) do
     case Native.validate_read_only_sql(sql) do
-      {:ok, validated_sql} ->
-        execute_and_analyze(validated_sql)
-
-      {:unsafe_sql, reason} ->
-        {:unsafe_sql, reason}
-
-      {:error, reason} ->
-        {:error, "Motor de validacao indisponivel: #{reason}"}
+      {:ok, validated_sql} -> execute_and_analyze(validated_sql)
+      {:unsafe_sql, reason} -> {:unsafe_sql, reason}
+      {:error, reason} -> {:error, "Motor de validacao indisponivel: #{reason}"}
     end
   end
 
   # ---------------------------------------------------------------------------
   # Privado
   # ---------------------------------------------------------------------------
+
+  # Tenta Ollama primeiro; se indisponivel ou timeout, cai no LlmMock.
+  defp resolve_sql(question) do
+    case OllamaClient.generate_sql(question) do
+      {:ok, sql} ->
+        Logger.debug("[Insights] Ollama gerou SQL: #{sql}")
+        {:ok, sql}
+
+      {:error, reason} when reason in [:unavailable, :timeout] ->
+        Logger.warning("[Insights] Ollama #{reason}, usando LlmMock como fallback")
+        LlmMock.generate_sql(question)
+
+      {:error, :cannot_answer} ->
+        # Tenta o mock antes de desistir (pode ser uma das 6 perguntas fixas)
+        case LlmMock.generate_sql(question) do
+          {:ok, sql} -> {:ok, sql}
+          _ -> {:error, :cannot_answer}
+        end
+
+      {:error, _} ->
+        LlmMock.generate_sql(question)
+    end
+  end
 
   defp validate_with_timing(sql) do
     t0 = System.monotonic_time()
@@ -180,12 +174,10 @@ defmodule UncoverAegis.Insights do
 
   defp extract_spends(%{columns: columns, rows: rows}) do
     case Enum.find_index(columns, &(&1 == "spend")) do
-      nil ->
-        []
-
+      nil -> []
       idx ->
         rows
-        |> Enum.map(fn row -> Enum.at(row, idx) end)
+        |> Enum.map(&Enum.at(&1, idx))
         |> Enum.filter(&is_number/1)
         |> Enum.map(&(&1 / 1.0))
     end

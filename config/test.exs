@@ -1,8 +1,9 @@
 import Config
 
-# Banco em memoria para testes: reseta a cada execucao, sem estado residual.
-# O Sandbox garante isolamento entre testes concorrentes (async: true).
+# Configura o banco de dados em memoria para testes.
+# Pool Sandbox garante isolamento entre testes concorrentes:
+# cada teste recebe sua propria transacao que e revertida ao final.
 config :uncover_aegis, UncoverAegis.Repo,
   database: ":memory:",
   pool: Ecto.Adapters.SQLite3.Sandbox,
-  pool_size: 5
+  pool_size: 1

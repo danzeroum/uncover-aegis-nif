@@ -1,29 +1,14 @@
 defmodule UncoverAegis.Insights.OllamaClient do
   @moduledoc """
   Cliente HTTP para o Ollama rodando localmente.
-
-  Converte perguntas em linguagem natural para SQL usando o modelo
-  `qwen2.5-coder:7b`, que e especializado em geracao de codigo.
-
-  ## System Prompt
-
-  O prompt e deliberadamente restritivo:
-  - Responde APENAS com a query SQL, sem markdown, sem explicacao
-  - Instrui o modelo a gerar somente SELECT (nunca DML/DDL)
-  - Inclui o schema completo da tabela para grounding
-
-  Mesmo que o modelo desobedeça e gere um DELETE/DROP, o Guardrail
-  Rust bloqueia antes de tocar o banco — essa e a defesa em profundidade.
-
-  ## Timeout
-
-  `qwen2.5-coder:7b` responde em ~1-3s na VPS. Timeout de 15s para
-  cobrir casos de cold start (primeiro request apos idle).
+  Usa :gen_tcp diretamente para evitar dependencia de :inets/:httpc.
   """
 
   require Logger
 
-  @ollama_url "http://localhost:11434/api/generate"
+  @ollama_host ~c"localhost"
+  @ollama_port 11434
+  @ollama_path "/api/generate"
   @model "qwen2.5-coder:7b"
   @timeout_ms 15_000
 
@@ -38,10 +23,10 @@ defmodule UncoverAegis.Insights.OllamaClient do
     - campaign_id TEXT NOT NULL       -- e.g. "camp_google_brand"
     - platform TEXT NOT NULL          -- "google", "meta", "tiktok", "linkedin"
     - spend REAL NOT NULL             -- ad spend in BRL (R$)
-    - impressions INTEGER NOT NULL    -- total impressions
-    - clicks INTEGER NOT NULL         -- total clicks
-    - conversions INTEGER NOT NULL    -- total conversions
-    - date DATE NOT NULL              -- date of the record
+    - impressions INTEGER NOT NULL
+    - clicks INTEGER NOT NULL
+    - conversions INTEGER NOT NULL
+    - date DATE NOT NULL
     - inserted_at DATETIME
     - updated_at DATETIME
 
@@ -53,14 +38,6 @@ defmodule UncoverAegis.Insights.OllamaClient do
   5. Always use meaningful column aliases (AS) for aggregations.
   """
 
-  @doc """
-  Gera SQL a partir de uma pergunta em linguagem natural via Ollama.
-
-  Retorna `{:ok, sql}` em caso de sucesso, ou erros tipados:
-  - `{:error, :cannot_answer}` - modelo nao conseguiu gerar SQL
-  - `{:error, :timeout}` - Ollama demorou mais que @timeout_ms
-  - `{:error, :unavailable}` - Ollama nao esta rodando
-  """
   @spec generate_sql(String.t()) ::
           {:ok, String.t()}
           | {:error, :cannot_answer}
@@ -68,55 +45,73 @@ defmodule UncoverAegis.Insights.OllamaClient do
           | {:error, :unavailable}
           | {:error, :not_understood}
   def generate_sql(question) when is_binary(question) do
-    body =
-      Jason.encode!(%{
-        model: @model,
-        prompt: question,
-        system: @system_prompt,
-        stream: false,
-        options: %{
-          temperature: 0.1,
-          top_p: 0.9,
-          num_predict: 256
-        }
-      })
+    body = Jason.encode!(%{
+      model: @model,
+      prompt: question,
+      system: @system_prompt,
+      stream: false,
+      options: %{temperature: 0.1, top_p: 0.9, num_predict: 256}
+    })
 
-    case http_post(@ollama_url, body) do
-      {:ok, %{"response" => response}} ->
-        parse_response(response)
+    case tcp_post(body) do
+      {:ok, response_body} ->
+        case Jason.decode(response_body) do
+          {:ok, %{"response" => raw}} -> parse_response(raw)
+          _ -> {:error, :cannot_answer}
+        end
 
       {:error, reason} ->
-        Logger.warning("[OllamaClient] Falha: #{inspect(reason)}")
+        Logger.warning("[OllamaClient] Falha TCP: #{inspect(reason)}")
         {:error, reason}
     end
   end
 
   # ---------------------------------------------------------------------------
-  # Privado
+  # HTTP/1.1 via :gen_tcp puro -- sem dependencia de :inets
   # ---------------------------------------------------------------------------
 
-  defp http_post(url, body) do
-    :application.ensure_started(:inets)
-    :application.ensure_started(:ssl)
+  defp tcp_post(body) do
+    content_length = byte_size(body)
 
-    headers = [{~c"content-type", ~c"application/json"}]
-    request = {String.to_charlist(url), headers, ~c"application/json", body}
+    request =
+      "POST #{@ollama_path} HTTP/1.1\r\n" <>
+      "Host: localhost:#{@ollama_port}\r\n" <>
+      "Content-Type: application/json\r\n" <>
+      "Content-Length: #{content_length}\r\n" <>
+      "Connection: close\r\n" <>
+      "\r\n" <>
+      body
 
-    case :httpc.request(:post, request, [{:timeout, @timeout_ms}], []) do
-      {:ok, {{_, 200, _}, _headers, resp_body}} ->
-        Jason.decode(List.to_string(resp_body))
+    case :gen_tcp.connect(@ollama_host, @ollama_port, [:binary, active: false], @timeout_ms) do
+      {:ok, socket} ->
+        :ok = :gen_tcp.send(socket, request)
+        result = recv_all(socket, "", @timeout_ms)
+        :gen_tcp.close(socket)
 
-      {:ok, {{_, status, _}, _headers, _body}} ->
-        {:error, {:http_error, status}}
+        case result do
+          {:ok, raw} -> extract_body(raw)
+          err -> err
+        end
 
-      {:error, {:timeout, _}} ->
-        {:error, :timeout}
+      {:error, :econnrefused} -> {:error, :unavailable}
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-      {:error, {:failed_connect, _}} ->
-        {:error, :unavailable}
+  defp recv_all(socket, acc, timeout) do
+    case :gen_tcp.recv(socket, 0, timeout) do
+      {:ok, data} -> recv_all(socket, acc <> data, timeout)
+      {:error, :closed} -> {:ok, acc}
+      {:error, :timeout} -> {:error, :timeout}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-      {:error, reason} ->
-        {:error, reason}
+  defp extract_body(raw) do
+    case String.split(raw, "\r\n\r\n", parts: 2) do
+      [_headers, body] -> {:ok, String.trim(body)}
+      _ -> {:error, :malformed_response}
     end
   end
 
@@ -124,7 +119,6 @@ defmodule UncoverAegis.Insights.OllamaClient do
     sql =
       raw
       |> String.trim()
-      # Remove blocos de markdown caso o modelo desobedeça
       |> String.replace(~r/```sql\s*/i, "")
       |> String.replace(~r/```\s*/, "")
       |> String.trim()
@@ -133,10 +127,8 @@ defmodule UncoverAegis.Insights.OllamaClient do
       sql == "CANNOT_ANSWER" or sql == "" ->
         {:error, :cannot_answer}
 
-      # Rejeita qualquer tentativa de DML/DDL mesmo se o modelo gerar
-      # (o Guardrail Rust e a segunda linha de defesa, mas rejeitamos aqui tambem)
       String.match?(sql, ~r/^\s*(INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE)/i) ->
-        Logger.warning("[OllamaClient] Modelo gerou DML — rejeitado antes do guardrail: #{sql}")
+        Logger.warning("[OllamaClient] Modelo gerou DML, rejeitado: #{sql}")
         {:error, :cannot_answer}
 
       true ->

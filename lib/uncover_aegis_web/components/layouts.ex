@@ -16,16 +16,11 @@ defmodule UncoverAegisWeb.Layouts do
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <%!-- csrf token via Plug.CSRFProtection (padrao Phoenix 1.7+) --%>
         <meta name="csrf-token" content={Plug.CSRFProtection.get_csrf_token()} />
         <title>Uncover Aegis | Trust OS</title>
-        <%!-- Tailwind via CDN: zero pipeline de assets --%%>
         <script src="https://cdn.tailwindcss.com"></script>
-        <%!-- Phoenix e LiveView via CDN --%%>
-        <script defer src="https://cdn.jsdelivr.net/npm/phoenix@1.7.21/priv/static/phoenix.min.js">
-        </script>
-        <script defer src="https://cdn.jsdelivr.net/npm/phoenix_live_view@0.20.17/priv/static/phoenix_live_view.min.js">
-        </script>
+        <script defer src="https://cdn.jsdelivr.net/npm/phoenix@1.7.21/priv/static/phoenix.min.js"></script>
+        <script defer src="https://cdn.jsdelivr.net/npm/phoenix_live_view@0.20.17/priv/static/phoenix_live_view.min.js"></script>
         <script>
           window.addEventListener("DOMContentLoaded", () => {
             const csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");

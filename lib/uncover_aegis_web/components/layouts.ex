@@ -8,8 +8,6 @@ defmodule UncoverAegisWeb.Layouts do
   """
 
   use Phoenix.Component
-  import Phoenix.Controller, only: [get_csrf_token: 1]
-  import Plug.Conn, only: [get_session: 2]
 
   def root(assigns) do
     ~H"""
@@ -18,14 +16,15 @@ defmodule UncoverAegisWeb.Layouts do
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <meta name="csrf-token" content={@conn |> get_csrf_token()} />
+        <%!-- csrf token via Plug.CSRFProtection (padrao Phoenix 1.7+) --%>
+        <meta name="csrf-token" content={Plug.CSRFProtection.get_csrf_token()} />
         <title>Uncover Aegis | Trust OS</title>
-        <%# Tailwind via CDN: zero pipeline de assets %>
+        <%!-- Tailwind via CDN: zero pipeline de assets --%%>
         <script src="https://cdn.tailwindcss.com"></script>
-        <%# Phoenix e LiveView via CDN: sem esbuild necessario %>
-        <script defer src="https://cdn.jsdelivr.net/npm/phoenix@1.7.11/priv/static/phoenix.min.js">
+        <%!-- Phoenix e LiveView via CDN --%%>
+        <script defer src="https://cdn.jsdelivr.net/npm/phoenix@1.7.21/priv/static/phoenix.min.js">
         </script>
-        <script defer src="https://cdn.jsdelivr.net/npm/phoenix_live_view@0.20.14/priv/static/phoenix_live_view.min.js">
+        <script defer src="https://cdn.jsdelivr.net/npm/phoenix_live_view@0.20.17/priv/static/phoenix_live_view.min.js">
         </script>
         <script>
           window.addEventListener("DOMContentLoaded", () => {

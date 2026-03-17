@@ -44,7 +44,7 @@ defmodule UncoverAegis.CampaignMetric do
   - `spend` deve ser >= 0 (gastos negativos são inválidos).
   - `platform` deve ser um dos valores conhecidos.
   """
-  @spec changeset(t(), map()) :: Ecto.Changeset.t()
+  @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
   def changeset(metric \\ %__MODULE__{}, attrs) do
     metric
     |> cast(attrs, @required_fields ++ @optional_fields)

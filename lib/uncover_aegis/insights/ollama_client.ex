@@ -1,7 +1,7 @@
 defmodule UncoverAegis.Insights.OllamaClient do
   @moduledoc """
   Cliente HTTP para o Ollama rodando localmente.
-  Usa :gen_tcp diretamente para evitar dependencia de :inets/:httpc.
+  Usa :gen_tcp com timeout de 60s para cobrir cold start do qwen2.5-coder:7b.
   """
 
   require Logger
@@ -10,7 +10,9 @@ defmodule UncoverAegis.Insights.OllamaClient do
   @ollama_port 11434
   @ollama_path "/api/generate"
   @model "qwen2.5-coder:7b"
-  @timeout_ms 15_000
+  # 60s para cobrir cold start do modelo 7b
+  @connect_timeout 5_000
+  @recv_timeout 60_000
 
   @system_prompt """
   You are a SQL expert for a marketing analytics platform.
@@ -20,15 +22,13 @@ defmodule UncoverAegis.Insights.OllamaClient do
   Table: campaign_metrics
   Columns:
     - id INTEGER PRIMARY KEY
-    - campaign_id TEXT NOT NULL       -- e.g. "camp_google_brand"
+    - campaign_id TEXT NOT NULL
     - platform TEXT NOT NULL          -- "google", "meta", "tiktok", "linkedin"
     - spend REAL NOT NULL             -- ad spend in BRL (R$)
     - impressions INTEGER NOT NULL
     - clicks INTEGER NOT NULL
     - conversions INTEGER NOT NULL
     - date DATE NOT NULL
-    - inserted_at DATETIME
-    - updated_at DATETIME
 
   STRICT RULES:
   1. Respond with ONLY the SQL query. No explanation, no markdown, no code blocks.
@@ -50,14 +50,20 @@ defmodule UncoverAegis.Insights.OllamaClient do
       prompt: question,
       system: @system_prompt,
       stream: false,
-      options: %{temperature: 0.1, top_p: 0.9, num_predict: 256}
+      options: %{temperature: 0.1, top_p: 0.9, num_predict: 200}
     })
 
     case tcp_post(body) do
       {:ok, response_body} ->
         case Jason.decode(response_body) do
-          {:ok, %{"response" => raw}} -> parse_response(raw)
-          _ -> {:error, :cannot_answer}
+          {:ok, %{"response" => raw}} ->
+            parse_response(raw)
+          {:ok, other} ->
+            Logger.warning("[OllamaClient] Resposta inesperada: #{inspect(other)}")
+            {:error, :cannot_answer}
+          {:error, _} ->
+            # Pode ser chunked encoding -- tenta extrair JSON do body bruto
+            parse_chunked_body(response_body)
         end
 
       {:error, reason} ->
@@ -67,7 +73,7 @@ defmodule UncoverAegis.Insights.OllamaClient do
   end
 
   # ---------------------------------------------------------------------------
-  # HTTP/1.1 via :gen_tcp puro -- sem dependencia de :inets
+  # HTTP/1.1 via :gen_tcp puro
   # ---------------------------------------------------------------------------
 
   defp tcp_post(body) do
@@ -82,10 +88,12 @@ defmodule UncoverAegis.Insights.OllamaClient do
       "\r\n" <>
       body
 
-    case :gen_tcp.connect(@ollama_host, @ollama_port, [:binary, active: false], @timeout_ms) do
+    case :gen_tcp.connect(@ollama_host, @ollama_port, [:binary, active: false], @connect_timeout) do
       {:ok, socket} ->
         :ok = :gen_tcp.send(socket, request)
-        result = recv_all(socket, "", @timeout_ms)
+        # seta timeout de recepcao no socket
+        :inet.setopts(socket, [{:send_timeout, @recv_timeout}])
+        result = recv_all(socket, "")
         :gen_tcp.close(socket)
 
         case result do
@@ -99,9 +107,9 @@ defmodule UncoverAegis.Insights.OllamaClient do
     end
   end
 
-  defp recv_all(socket, acc, timeout) do
-    case :gen_tcp.recv(socket, 0, timeout) do
-      {:ok, data} -> recv_all(socket, acc <> data, timeout)
+  defp recv_all(socket, acc) do
+    case :gen_tcp.recv(socket, 0, @recv_timeout) do
+      {:ok, data} -> recv_all(socket, acc <> data)
       {:error, :closed} -> {:ok, acc}
       {:error, :timeout} -> {:error, :timeout}
       {:error, reason} -> {:error, reason}
@@ -112,6 +120,25 @@ defmodule UncoverAegis.Insights.OllamaClient do
     case String.split(raw, "\r\n\r\n", parts: 2) do
       [_headers, body] -> {:ok, String.trim(body)}
       _ -> {:error, :malformed_response}
+    end
+  end
+
+  # Ollama pode retornar chunked transfer encoding
+  # Nesse caso o body contem tamanho do chunk em hex antes do JSON
+  defp parse_chunked_body(body) do
+    # Tenta encontrar JSON valido removendo prefixos de chunk hex
+    cleaned =
+      body
+      |> String.replace(~r/^[0-9a-fA-F]+\r\n/, "")
+      |> String.replace(~r/\r\n[0-9a-fA-F]+\r\n/, "")
+      |> String.replace("\r\n", "")
+      |> String.trim()
+
+    case Jason.decode(cleaned) do
+      {:ok, %{"response" => raw}} -> parse_response(raw)
+      _ ->
+        Logger.warning("[OllamaClient] Nao conseguiu parsear body chunked: #{String.slice(body, 0, 100)}")
+        {:error, :cannot_answer}
     end
   end
 

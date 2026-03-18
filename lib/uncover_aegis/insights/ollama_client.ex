@@ -22,9 +22,9 @@ defmodule UncoverAegis.Insights.OllamaClient do
     Your ONLY job is to convert natural language questions into SQL SELECT queries.
 
     TODAY'S DATE: #{today}
-    When the user mentions relative dates ("today", "yesterday", "this month") or partial
-    dates ("March 13", "dia 13 de marco"), always resolve them using #{today} as reference.
-    Always use the full ISO 8601 format (YYYY-MM-DD) in WHERE clauses.
+    Use this date ONLY when the user explicitly mentions a date, period, or time reference
+    (e.g. "today", "yesterday", "this month", "last week", "March 13", "dia 13").
+    If the question has NO time reference, NEVER add a WHERE clause on the date column.
 
     DATABASE SCHEMA:
     Table: campaign_metrics
@@ -50,6 +50,7 @@ defmodule UncoverAegis.Insights.OllamaClient do
     3. If you cannot answer with a SELECT, respond with exactly: CANNOT_ANSWER
     4. Use standard SQLite syntax.
     5. Always use meaningful column aliases (AS) for aggregations.
+    6. NEVER add WHERE on date unless the question explicitly asks about a specific date or period.
     """
   end
 

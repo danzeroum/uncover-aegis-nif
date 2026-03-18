@@ -1,33 +1,17 @@
-//! aegis_core — Núcleo de sanitização e governança CPU-bound para o Uncover Aegis.
-//!
-//! Este módulo é compilado como biblioteca dinâmica e carregado pela BEAM
-//! via NIF (Native Implemented Function) usando a biblioteca Rustler.
-//!
-//! # Princípios de Design (herdados do BuildToValue)
-//!
-//! - **Zero `.unwrap()`**: todo erro é tratado com `match` e retornado como
-//!   tupla `{:error, reason}` para o Elixir. Panics derrubam a VM inteira.
-//! - **Fail-Secure**: em caso de ambiguidade, BLOQUEIA (não permite).
-//! - **Dirty NIF (`DirtyCpu`)**: sinaliza à BEAM para executar esta função
-//!   em threads separadas dos schedulers principais, evitando starvation
-//!   caso a operação CPU-bound ultrapasse 1ms.
+//! aegis_core — Núcleo de sanitização, governança e modelagem MMM para o Uncover Aegis.
 //!
 //! # NIFs Exportadas
 //!
-//! | Função                   | MVP | Descrição                                    |
-//! |--------------------------|-----|----------------------------------------------|
-//! | `sanitize_and_validate`  |  1  | Remove PII e detecta Prompt Injection        |
-//! | `validate_read_only_sql` |  2  | Garante que o SQL da IA seja apenas SELECT   |
-//! | `calculate_zscore`       |  3  | Detecta anomalias estatísticas em gastos     |
+//! | Função                   | MVP | Descrição                                         |
+//! |--------------------------|-----|---------------------------------------------------|
+//! | `sanitize_and_validate`  |  1  | Remove PII e detecta Prompt Injection             |
+//! | `validate_read_only_sql` |  2  | Garante que o SQL da IA seja apenas SELECT        |
+//! | `calculate_zscore`       |  3  | Detecta anomalias estatísticas em gastos          |
+//! | `calculate_adstock`      |  4  | Adstock + saturação Hill (Marketing Mix Modeling) |
 
 use regex::Regex;
 use rustler::{Atom, NifResult};
 
-// ---------------------------------------------------------------------------
-// Atoms Elixir — retornados como primeiro elemento das tuplas de resultado.
-// Equivalentes a :ok, :error, :threat_detected, :unsafe_sql, :insufficient_data
-// no lado Elixir.
-// ---------------------------------------------------------------------------
 mod atoms {
     rustler::atoms! {
         ok,
@@ -42,56 +26,22 @@ mod atoms {
 // MVP 1 — Ingestão Segura: Sanitização de PII + Detecção de Prompt Injection
 // ===========================================================================
 
-/// Sanitiza um texto de campanha de marketing:
-/// 1. Remove PII (CPF brasileiro, e-mail) substituindo por `[REDACTED]`.
-/// 2. Detecta tentativas de Prompt Injection por heurística de keywords.
-///
-/// Executado como **Dirty CPU NIF**: a BEAM agenda esta função em threads
-/// de workers sujos (dirty schedulers), liberando os schedulers principais
-/// para continuar processando processos leves do Elixir.
-///
-/// # Retorno
-/// - `{:ok, texto_sanitizado}` — processamento normal, PII removido.
-/// - `{:threat_detected, motivo}` — conteúdo bloqueado por segurança.
-/// - `{:error, motivo}` — falha interna (ex: falha na compilação de regex).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn sanitize_and_validate(raw_text: String) -> NifResult<(Atom, String)> {
-    // Passo 1: Regex de CPF — DFA garante O(n) sem backtracking catastrófico.
     let cpf_regex = match Regex::new(r"\b\d{3}\.\d{3}\.\d{3}-\d{2}\b") {
         Ok(re) => re,
-        Err(_) => {
-            return Ok((
-                atoms::error(),
-                "Falha na compilacao do motor regex de CPF".to_string(),
-            ))
-        }
+        Err(_) => return Ok((atoms::error(), "Falha na compilacao do motor regex de CPF".to_string())),
     };
 
-    // Passo 2: Regex de e-mail
     let email_regex = match Regex::new(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}") {
         Ok(re) => re,
-        Err(_) => {
-            return Ok((
-                atoms::error(),
-                "Falha na compilacao do motor regex de Email".to_string(),
-            ))
-        }
+        Err(_) => return Ok((atoms::error(), "Falha na compilacao do motor regex de Email".to_string())),
     };
 
-    // Passo 3: Sanitização em cadeia — CPF depois Email.
-    // replace_all retorna Cow<str>; .to_string() materializa sem alocações extras.
-    let after_cpf = cpf_regex
-        .replace_all(&raw_text, "[CPF_REDACTED]")
-        .to_string();
+    let after_cpf = cpf_regex.replace_all(&raw_text, "[CPF_REDACTED]").to_string();
+    let sanitized = email_regex.replace_all(&after_cpf, "[EMAIL_REDACTED]").to_string();
 
-    let sanitized = email_regex
-        .replace_all(&after_cpf, "[EMAIL_REDACTED]")
-        .to_string();
-
-    // Passo 4: Detecção de Prompt Injection por heurística de keywords.
-    // Lowercase evita bypass por capitalização ("IGNORE", "Ignore", etc.)
     let lower = sanitized.to_lowercase();
-
     let injection_patterns = [
         "ignore todas as instruções",
         "ignore previous instructions",
@@ -119,43 +69,14 @@ fn sanitize_and_validate(raw_text: String) -> NifResult<(Atom, String)> {
 // MVP 2 — Insights Controlados: SQL Guardrail
 // ===========================================================================
 
-/// Valida que um SQL gerado por LLM é estritamente de leitura.
-///
-/// Protege o banco de dados contra queries destrutivas (DROP, DELETE, UPDATE)
-/// que uma IA poderia alucinar ao responder perguntas em linguagem natural.
-///
-/// ## Regras de Validação (Fail-Secure)
-///
-/// 1. **Allowlist de início**: a query DEVE começar com `SELECT` ou `WITH`.
-///    Qualquer outra coisa (INSERT, EXEC, etc.) é bloqueada imediatamente.
-///
-/// 2. **Blocklist de keywords**: mesmo dentro de um SELECT, palavras como
-///    `DELETE` ou `DROP` são proibidas (ex: subqueries maliciosas).
-///
-/// ## Por que `\b` (word boundary) na Regex?
-///
-/// Usar `.contains("UPDATE")` causaria falsos positivos em colunas como
-/// `last_updated_at`. A regex `\bUPDATE\b` garante que só correspondemos
-/// à palavra completa, eliminando esse bug de produção.
-///
-/// # Retorno
-/// - `{:ok, sql_original}` — query segura para execução.
-/// - `{:unsafe_sql, motivo}` — query bloqueada pela política.
-/// - `{:error, motivo}` — falha interna na compilação de regex.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn validate_read_only_sql(query: String) -> NifResult<(Atom, String)> {
     let q_upper = query.trim().to_uppercase();
 
-    // Regra 1 (Allowlist): deve iniciar com SELECT ou WITH (CTEs são válidos).
     if !q_upper.starts_with("SELECT") && !q_upper.starts_with("WITH") {
-        return Ok((
-            atoms::unsafe_sql(),
-            "Query deve ser de leitura (iniciar com SELECT ou WITH)".to_string(),
-        ));
+        return Ok((atoms::unsafe_sql(), "Query deve ser de leitura (iniciar com SELECT ou WITH)".to_string()));
     }
 
-    // Regra 2 (Blocklist com word-boundary): proíbe comandos de mutação e DDL.
-    // \b evita falsos positivos em nomes de colunas (ex: last_updated_at).
     let forbidden = [
         "INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
         "TRUNCATE", "GRANT", "REVOKE", "CREATE", "REPLACE",
@@ -166,18 +87,12 @@ fn validate_read_only_sql(query: String) -> NifResult<(Atom, String)> {
         let pattern = format!(r"\b{}\b", keyword);
         match Regex::new(&pattern) {
             Ok(re) if re.is_match(&q_upper) => {
-                return Ok((
-                    atoms::unsafe_sql(),
-                    format!("Keyword de mutacao detectada: {}", keyword),
-                ))
+                return Ok((atoms::unsafe_sql(), format!("Keyword de mutacao detectada: {}", keyword)))
             }
             Err(_) => {
-                return Ok((
-                    atoms::error(),
-                    format!("Falha ao compilar regex para keyword: {}", keyword),
-                ))
+                return Ok((atoms::error(), format!("Falha ao compilar regex para keyword: {}", keyword)))
             }
-            _ => {} // keyword não encontrada, continua
+            _ => {}
         }
     }
 
@@ -188,61 +103,156 @@ fn validate_read_only_sql(query: String) -> NifResult<(Atom, String)> {
 // MVP 3 — Monitoramento Preditivo: Z-Score para Anomalias de Gasto
 // ===========================================================================
 
-/// Calcula o Z-Score do último elemento de um array de gastos.
-///
-/// Reutiliza a lógica do módulo `statistics/zscore.rs` do BuildToValue (BTV),
-/// adaptada para retornar uma tupla segura para a BEAM.
-///
-/// O Z-Score mede quantos desvios padrão um valor está da média histórica.
-/// Um |z| > 3.0 indica anomalia estatística com 99.7% de confiança.
-///
-/// ## Exemplo
-/// Gastos históricos: [100, 105, 98, 102] e novo gasto: 500
-/// → Z-Score ≈ 7.8 → anomalia detectada → alerta para o CMO.
-///
-/// # Retorno
-/// - `{:ok, zscore}` — cálculo bem-sucedido (f64).
-/// - `{:insufficient_data, 0.0}` — menos de 2 pontos (sem variância calculável).
-/// - `{:error, 0.0}` — falha interna inesperada.
 #[rustler::nif(schedule = "DirtyCpu")]
 fn calculate_zscore(spends: Vec<f64>) -> NifResult<(Atom, f64)> {
     let n = spends.len();
-
-    // Precisamos de no mínimo 2 pontos para calcular variância significativa.
     if n < 2 {
         return Ok((atoms::insufficient_data(), 0.0));
     }
 
     let n_f = n as f64;
     let mean = spends.iter().sum::<f64>() / n_f;
-
-    // Variância populacional (não amostral): adequada para séries temporais
-    // onde temos o histórico completo, não uma amostra.
     let variance = spends.iter().map(|v| (v - mean).powi(2)).sum::<f64>() / n_f;
     let std_dev = variance.sqrt();
 
-    // Desvio padrão zero significa gastos idênticos: sem anomalia possível.
     if std_dev == 0.0 {
         return Ok((atoms::ok(), 0.0));
     }
 
-    // O último elemento é o "gasto atual" a ser avaliado contra o histórico.
     match spends.last() {
-        Some(&last_spend) => {
-            let z_score = (last_spend - mean) / std_dev;
-            Ok((atoms::ok(), z_score))
-        }
-        // Ramo teoricamente inalcançável (n >= 2 garante last()), mas
-        // o compilador exige tratamento explícito. Fail-Secure.
+        Some(&last_spend) => Ok((atoms::ok(), (last_spend - mean) / std_dev)),
         None => Ok((atoms::error(), 0.0)),
     }
 }
 
+// ===========================================================================
+// MVP 4 — Marketing Mix Modeling: Adstock com Saturação Hill
+// ===========================================================================
+//
+// O Adstock é o algoritmo central do MMM (Marketing Mix Modeling).
+// Modela dois fenômenos reais de mídia:
+//
+// 1. CARRY-OVER (memória): um anúncio visto hoje ainda influencia compras
+//    nos próximos dias/semanas. Controlado por `decay` (0.0–1.0).
+//    decay=0.0 → sem memória (efeito apenas no dia)
+//    decay=0.7 → 70% do efeito persiste para o próximo período
+//
+// 2. SATURAÇÃO (lei dos retornos decrescentes): dobrar o investimento não
+//    dobra o impacto. Modelado pela curva Hill: f(x) = x^alpha / (x^alpha + K^alpha)
+//    alpha > 1 → curva em S (saturação lenta no início, depois rápida)
+//    K (half_saturation) → ponto de 50% do impacto máximo
+//
+// RETORNO:
+// - adstock_values: série temporal do impacto acumulado (carry-over aplicado)
+// - saturated_values: adstock após curva de saturação Hill (0.0–1.0)
+// - contribution_pct: % de contribuição de cada período sobre o total saturado
+//
+// Exemplo de uso via API:
+//   POST /api/v1/mmm/adstock
+//   { "spends": [1200,1350,1100,1280], "decay": 0.7, "alpha": 2.0, "half_saturation": 1500.0 }
+
+/// Resultado do cálculo de Adstock retornado ao Elixir.
+/// Rustler serializa structs com NifStruct automaticamente como mapas Elixir.
+#[derive(rustler::NifStruct)]
+#[module = "UncoverAegis.Native.AdstockResult"]
+pub struct AdstockResult {
+    pub adstock_values: Vec<f64>,
+    pub saturated_values: Vec<f64>,
+    pub contribution_pct: Vec<f64>,
+}
+
+/// Calcula Adstock com carry-over geométrico e saturação Hill.
+///
+/// # Parâmetros
+/// - `spends`: série temporal de gastos (ex: spend diário por campanha)
+/// - `decay`: taxa de retenção do efeito entre períodos (0.0 a 1.0)
+/// - `alpha`: expoente da curva Hill — controla a forma da saturação
+/// - `half_saturation`: valor de gasto onde o impacto é 50% do máximo
+///
+/// # Retorno
+/// - `{:ok, %AdstockResult{}}` — cálculo bem-sucedido
+/// - `{:insufficient_data, _}` — lista vazia
+/// - `{:error, motivo}` — parâmetros inválidos
+#[rustler::nif(schedule = "DirtyCpu")]
+fn calculate_adstock(
+    spends: Vec<f64>,
+    decay: f64,
+    alpha: f64,
+    half_saturation: f64,
+) -> NifResult<(Atom, AdstockResult)> {
+    let empty = AdstockResult {
+        adstock_values: vec![],
+        saturated_values: vec![],
+        contribution_pct: vec![],
+    };
+
+    if spends.is_empty() {
+        return Ok((atoms::insufficient_data(), empty));
+    }
+
+    // Validações de parâmetros — Fail-Secure
+    if !(0.0..=1.0).contains(&decay) {
+        return Ok((atoms::error(), AdstockResult {
+            adstock_values: vec![],
+            saturated_values: vec![],
+            contribution_pct: vec![-1.0], // sentinel: decay fora do intervalo
+        }));
+    }
+    if alpha <= 0.0 || half_saturation <= 0.0 {
+        return Ok((atoms::error(), AdstockResult {
+            adstock_values: vec![],
+            saturated_values: vec![],
+            contribution_pct: vec![-2.0], // sentinel: alpha ou K inválidos
+        }));
+    }
+
+    // Passo 1: Carry-over geométrico (Adstock clássico de Broadbent, 1979)
+    // adstock_t = spend_t + decay * adstock_{t-1}
+    let mut adstock_values: Vec<f64> = Vec::with_capacity(spends.len());
+    let mut prev: f64 = 0.0;
+    for &spend in &spends {
+        let current = spend + decay * prev;
+        adstock_values.push(current);
+        prev = current;
+    }
+
+    // Passo 2: Saturação Hill — transforma adstock em impacto (0.0 a 1.0)
+    // hill(x) = x^alpha / (x^alpha + K^alpha)
+    let k_alpha = half_saturation.powf(alpha);
+    let saturated_values: Vec<f64> = adstock_values
+        .iter()
+        .map(|&x| {
+            if x <= 0.0 {
+                0.0
+            } else {
+                let x_alpha = x.powf(alpha);
+                x_alpha / (x_alpha + k_alpha)
+            }
+        })
+        .collect();
+
+    // Passo 3: Contribuição percentual de cada período sobre o total saturado
+    let total_saturated: f64 = saturated_values.iter().sum();
+    let contribution_pct: Vec<f64> = if total_saturated > 0.0 {
+        saturated_values
+            .iter()
+            .map(|&s| (s / total_saturated) * 100.0)
+            .collect()
+    } else {
+        vec![0.0; saturated_values.len()]
+    };
+
+    Ok((atoms::ok(), AdstockResult {
+        adstock_values,
+        saturated_values,
+        contribution_pct,
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // Registro das NIFs exportadas para o módulo Elixir `UncoverAegis.Native`.
-// O nome do atom DEVE corresponder exatamente ao módulo Elixir com `use Rustler`.
 // ---------------------------------------------------------------------------
 rustler::init!(
     "Elixir.UncoverAegis.Native",
-    [sanitize_and_validate, validate_read_only_sql, calculate_zscore]
+    [sanitize_and_validate, validate_read_only_sql, calculate_zscore, calculate_adstock]
 );

@@ -27,7 +27,12 @@ defmodule UncoverAegisWeb.Router do
 
   scope "/api/v1", UncoverAegisWeb.Api do
     pipe_through :api
+
+    # MVP 2 — Text-to-SQL com guardrail Rust
     post "/insights/query", InsightsController, :query
-    get "/campaigns/metrics", MetricsController, :index
+    get  "/campaigns/metrics", MetricsController, :index
+
+    # MVP 4 — Marketing Mix Modeling
+    post "/mmm/adstock", AdstockController, :calculate
   end
 end

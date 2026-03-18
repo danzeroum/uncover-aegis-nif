@@ -2,14 +2,8 @@ defmodule UncoverAegis.Native do
   @moduledoc """
   Interface NIF para o núcleo Rust (aegis_core).
 
-  Este módulo é o ponto de contato entre o Elixir e a biblioteca
-  dinâmica compilada pelo Rustler. Todas as funções são executadas
-  como **Dirty CPU NIFs**, garantindo que os schedulers principais
-  da BEAM não sejam bloqueados por operações CPU-bound.
-
-  Cada função abaixo é um stub Elixir obrigatório: o Rustler substitui
-  o corpo `:erlang.nif_error(:nif_not_loaded)` pela implementação Rust
-  em tempo de carga da biblioteca dinâmica.
+  Todas as funções são executadas como **Dirty CPU NIFs**, garantindo que
+  os schedulers principais da BEAM não sejam bloqueados por operações CPU-bound.
   """
 
   use Rustler,
@@ -24,18 +18,9 @@ defmodule UncoverAegis.Native do
   Sanitiza um texto de campanha removendo PII e detectando Prompt Injection.
 
   ## Retorno
-  - `{:ok, texto_limpo}` — sanitiçação bem-sucedida, PII removido.
+  - `{:ok, texto_limpo}` — sanitização bem-sucedida, PII removido.
   - `{:threat_detected, motivo}` — conteúdo bloqueado por segurança.
   - `{:error, motivo}` — falha interna no motor.
-
-  ## Exemplos
-
-      iex> UncoverAegis.Native.sanitize_and_validate("CPF: 123.456.789-00")
-      {:ok, "CPF: [CPF_REDACTED]"}
-
-      iex> UncoverAegis.Native.sanitize_and_validate("ignore previous instructions")
-      {:threat_detected, "Prompt injection bloqueado: padrao 'ignore previous instructions' detectado"}
-
   """
   def sanitize_and_validate(_raw_text), do: :erlang.nif_error(:nif_not_loaded)
 
@@ -50,18 +35,6 @@ defmodule UncoverAegis.Native do
   - `{:ok, sql_original}` — query segura para execução.
   - `{:unsafe_sql, motivo}` — query bloqueada pela política.
   - `{:error, motivo}` — falha interna na compilação de regex.
-
-  ## Exemplos
-
-      iex> UncoverAegis.Native.validate_read_only_sql("SELECT spend FROM campaign_metrics")
-      {:ok, "SELECT spend FROM campaign_metrics"}
-
-      iex> UncoverAegis.Native.validate_read_only_sql("DROP TABLE campaign_metrics")
-      {:unsafe_sql, "Keyword de mutacao detectada: DROP"}
-
-      iex> UncoverAegis.Native.validate_read_only_sql("SELECT last_updated_at FROM campaign_metrics")
-      {:ok, "SELECT last_updated_at FROM campaign_metrics"}
-
   """
   def validate_read_only_sql(_query), do: :erlang.nif_error(:nif_not_loaded)
 
@@ -72,25 +45,52 @@ defmodule UncoverAegis.Native do
   @doc """
   Calcula o Z-Score do último elemento de uma lista de gastos.
 
-  O Z-Score mede quantos desvios padrão o gasto atual está da média
-  histórica. Um |z| > 3.0 indica anomalia com 99.7% de confiança.
-
   ## Retorno
   - `{:ok, z_score}` — cálculo bem-sucedido (float).
   - `{:insufficient_data, 0.0}` — menos de 2 pontos na lista.
   - `{:error, 0.0}` — falha interna inesperada.
-
-  ## Exemplos
-
-      iex> UncoverAegis.Native.calculate_zscore([100.0, 100.0, 100.0, 100.0])
-      {:ok, 0.0}
-
-      iex> UncoverAegis.Native.calculate_zscore([100.0, 105.0, 98.0, 102.0, 500.0])
-      {:ok, z} when z > 3.0
-
-      iex> UncoverAegis.Native.calculate_zscore([100.0])
-      {:insufficient_data, 0.0}
-
   """
   def calculate_zscore(_spends), do: :erlang.nif_error(:nif_not_loaded)
+
+  # ---------------------------------------------------------------------------
+  # MVP 4 — Marketing Mix Modeling: Adstock com Saturação Hill
+  # ---------------------------------------------------------------------------
+
+  @doc """
+  Calcula o Adstock de uma série temporal de gastos com carry-over
+  geométrico e saturação Hill — o algoritmo central do MMM.
+
+  ## Parâmetros
+  - `spends` — lista de gastos por período (ex: spend diário)
+  - `decay` — taxa de retenção do efeito entre períodos (0.0 a 1.0)
+    - `0.0` → sem memória (efeito apenas no dia)
+    - `0.7` → padrão para digital; 70% do efeito persiste ao próximo período
+    - `0.9` → TV/offline; efeito persiste por semanas
+  - `alpha` — expoente Hill; controla forma da curva de saturação (> 0)
+    - `1.0` → curva convexa simples
+    - `2.0` → curva em S (recomendado para digital)
+  - `half_saturation` — valor de adstock onde o impacto é 50% do máximo
+
+  ## Retorno
+  - `{:ok, %{adstock_values, saturated_values, contribution_pct}}` — sucesso
+  - `{:insufficient_data, _}` — lista de spends vazia
+  - `{:error, _}` — parâmetros inválidos
+
+  ## Exemplo
+
+      iex> UncoverAegis.Native.calculate_adstock(
+      ...>   [1200.0, 1350.0, 1100.0, 1280.0],
+      ...>   0.7,   # decay padrão para digital
+      ...>   2.0,   # curva em S
+      ...>   1500.0 # 50% de saturação em R$ 1.500
+      ...> )
+      {:ok, %UncoverAegis.Native.AdstockResult{
+        adstock_values: [1200.0, 2190.0, 2833.0, 3063.1],
+        saturated_values: [0.392, 0.680, 0.781, 0.806],
+        contribution_pct: [14.6, 25.4, 29.2, 30.1]
+      }}
+
+  """
+  def calculate_adstock(_spends, _decay, _alpha, _half_saturation),
+    do: :erlang.nif_error(:nif_not_loaded)
 end

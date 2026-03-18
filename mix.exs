@@ -6,6 +6,7 @@ defmodule UncoverAegis.MixProject do
       app: :uncover_aegis,
       version: "0.3.0",
       elixir: "~> 1.14",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
@@ -19,6 +20,10 @@ defmodule UncoverAegis.MixProject do
       source_url: "https://github.com/danzeroum/uncover-aegis-nif"
     ]
   end
+
+  # test/support so e compilado no ambiente :test
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   def application do
     [
@@ -36,7 +41,6 @@ defmodule UncoverAegis.MixProject do
       {:phoenix_live_view, "~> 0.20.14"},
       {:bandit, "~> 1.0"},
       {:jason, "~> 1.4"},
-      # Cobertura de codigo
       {:excoveralls, "~> 0.18", only: :test}
     ]
   end

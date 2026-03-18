@@ -1,11 +1,6 @@
 defmodule UncoverAegisWeb.Api.InsightsControllerTest do
   @moduledoc """
   Testes de contrato do endpoint POST /api/v1/insights/query.
-
-  Testa os tres fluxos principais:
-  - SQL direto valido (passa pelo guardrail Rust)
-  - SQL direto invalido (bloqueado pelo guardrail)
-  - Pergunta em linguagem natural (roteada para LlmMock)
   """
   use UncoverAegisWeb.ConnCase, async: false
 
@@ -65,20 +60,25 @@ defmodule UncoverAegisWeb.Api.InsightsControllerTest do
       assert conn.status == 403
     end
 
-    test "body vazio retorna HTTP 422", %{conn: conn} do
+    test "body vazio retorna HTTP 400 (bad_request)", %{conn: conn} do
+      # Controller retorna 400 quando nao ha 'question' nem 'sql'
       conn = post(conn, "/api/v1/insights/query", %{})
-      assert conn.status == 422
+      assert conn.status == 400
+      body = json_response(conn, 400)
+      assert body["error"] == "bad_request"
     end
 
-    test "resposta contem campo metadata com guardrail_us", %{conn: conn} do
+    test "SQL direto retorna campo metadata com row_count", %{conn: conn} do
+      # SQL direto nao passa pelo LLM, entao nao ha guardrail_us no metadata
+      # O contrato do run_safe_query retorna apenas row_count
       conn =
         post(conn, "/api/v1/insights/query", %{
-          "sql" => "SELECT COUNT(*) FROM campaign_metrics"
+          "sql" => "SELECT COUNT(*) AS n FROM campaign_metrics"
         })
 
       body = json_response(conn, 200)
-      assert is_number(body["metadata"]["guardrail_us"])
-      assert body["metadata"]["guardrail_us"] > 0
+      assert is_map(body["metadata"])
+      assert is_number(body["metadata"]["row_count"])
     end
 
     test "header x-request-id esta presente", %{conn: conn} do
@@ -103,14 +103,28 @@ defmodule UncoverAegisWeb.Api.InsightsControllerTest do
       assert is_list(body["data"])
     end
 
-    test "resposta NL contem campo anomaly booleano", %{conn: conn} do
+    test "resposta NL contem campo anomaly com chave detected", %{conn: conn} do
+      # O controller retorna anomaly como objeto: %{detected: bool, z_score: float}
       conn =
         post(conn, "/api/v1/insights/query", %{
           "question" => "qual o gasto total?"
         })
 
       body = json_response(conn, 200)
-      assert is_boolean(body["anomaly"])
+      assert is_map(body["anomaly"])
+      assert is_boolean(body["anomaly"]["detected"])
+      assert is_number(body["anomaly"]["z_score"])
+    end
+
+    test "resposta NL contem metadata com guardrail_us", %{conn: conn} do
+      conn =
+        post(conn, "/api/v1/insights/query", %{
+          "question" => "qual o gasto total?"
+        })
+
+      body = json_response(conn, 200)
+      assert is_number(body["metadata"]["guardrail_us"])
+      assert body["metadata"]["guardrail_us"] > 0
     end
   end
 end

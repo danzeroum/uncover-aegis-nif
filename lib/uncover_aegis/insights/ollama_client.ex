@@ -10,33 +10,47 @@ defmodule UncoverAegis.Insights.OllamaClient do
   @ollama_port 11434
   @ollama_path "/api/generate"
   @model "qwen2.5-coder:7b"
-  # 60s para cobrir cold start do modelo 7b
   @connect_timeout 5_000
   @recv_timeout 60_000
 
-  @system_prompt """
-  You are a SQL expert for a marketing analytics platform.
-  Your ONLY job is to convert natural language questions into SQL SELECT queries.
+  defp system_prompt do
+    today = Date.utc_today() |> Date.to_iso8601()
 
-  DATABASE SCHEMA:
-  Table: campaign_metrics
-  Columns:
-    - id INTEGER PRIMARY KEY
-    - campaign_id TEXT NOT NULL
-    - platform TEXT NOT NULL          -- "google", "meta", "tiktok", "linkedin"
-    - spend REAL NOT NULL             -- ad spend in BRL (R$)
-    - impressions INTEGER NOT NULL
-    - clicks INTEGER NOT NULL
-    - conversions INTEGER NOT NULL
-    - date DATE NOT NULL
+    """
+    You are a SQL expert for a marketing analytics platform.
+    Your ONLY job is to convert natural language questions into SQL SELECT queries.
 
-  STRICT RULES:
-  1. Respond with ONLY the SQL query. No explanation, no markdown, no code blocks.
-  2. ONLY generate SELECT queries. Never INSERT, UPDATE, DELETE, DROP, CREATE, or ALTER.
-  3. If you cannot answer with a SELECT, respond with exactly: CANNOT_ANSWER
-  4. Use standard SQLite syntax.
-  5. Always use meaningful column aliases (AS) for aggregations.
-  """
+    TODAY'S DATE: #{today}
+    When the user mentions relative dates ("today", "yesterday", "this month") or partial
+    dates ("March 13", "dia 13 de março"), always resolve them using #{today} as reference.
+    Always use the full ISO 8601 format (YYYY-MM-DD) in WHERE clauses.
+
+    DATABASE SCHEMA:
+    Table: campaign_metrics
+    Columns:
+      - id INTEGER PRIMARY KEY
+      - campaign_id TEXT NOT NULL
+      - platform TEXT NOT NULL          -- "google", "meta", "tiktok", "linkedin"
+      - spend REAL NOT NULL             -- ad spend in BRL (R$)
+      - impressions INTEGER NOT NULL
+      - clicks INTEGER NOT NULL
+      - conversions INTEGER NOT NULL
+      - date DATE NOT NULL              -- format: YYYY-MM-DD
+
+    KEY MARKETING METRICS (use these formulas when relevant):
+      - CPC (Cost per Click):       ROUND(SUM(spend) / SUM(clicks), 2)
+      - CPA (Cost per Acquisition): ROUND(SUM(spend) / SUM(conversions), 2)
+      - CVR (Conversion Rate):      ROUND(CAST(SUM(conversions) AS REAL) / SUM(clicks), 4)
+      - CTR (Click-Through Rate):   ROUND(CAST(SUM(clicks) AS REAL) / SUM(impressions), 4)
+
+    STRICT RULES:
+    1. Respond with ONLY the SQL query. No explanation, no markdown, no code blocks.
+    2. ONLY generate SELECT queries. Never INSERT, UPDATE, DELETE, DROP, CREATE, or ALTER.
+    3. If you cannot answer with a SELECT, respond with exactly: CANNOT_ANSWER
+    4. Use standard SQLite syntax.
+    5. Always use meaningful column aliases (AS) for aggregations.
+    """
+  end
 
   @spec generate_sql(String.t()) ::
           {:ok, String.t()}
@@ -48,7 +62,7 @@ defmodule UncoverAegis.Insights.OllamaClient do
     body = Jason.encode!(%{
       model: @model,
       prompt: question,
-      system: @system_prompt,
+      system: system_prompt(),
       stream: false,
       options: %{temperature: 0.1, top_p: 0.9, num_predict: 200}
     })
@@ -62,7 +76,6 @@ defmodule UncoverAegis.Insights.OllamaClient do
             Logger.warning("[OllamaClient] Resposta inesperada: #{inspect(other)}")
             {:error, :cannot_answer}
           {:error, _} ->
-            # Pode ser chunked encoding -- tenta extrair JSON do body bruto
             parse_chunked_body(response_body)
         end
 
@@ -71,10 +84,6 @@ defmodule UncoverAegis.Insights.OllamaClient do
         {:error, reason}
     end
   end
-
-  # ---------------------------------------------------------------------------
-  # HTTP/1.1 via :gen_tcp puro
-  # ---------------------------------------------------------------------------
 
   defp tcp_post(body) do
     content_length = byte_size(body)
@@ -91,7 +100,6 @@ defmodule UncoverAegis.Insights.OllamaClient do
     case :gen_tcp.connect(@ollama_host, @ollama_port, [:binary, active: false], @connect_timeout) do
       {:ok, socket} ->
         :ok = :gen_tcp.send(socket, request)
-        # seta timeout de recepcao no socket
         :inet.setopts(socket, [{:send_timeout, @recv_timeout}])
         result = recv_all(socket, "")
         :gen_tcp.close(socket)
@@ -123,10 +131,7 @@ defmodule UncoverAegis.Insights.OllamaClient do
     end
   end
 
-  # Ollama pode retornar chunked transfer encoding
-  # Nesse caso o body contem tamanho do chunk em hex antes do JSON
   defp parse_chunked_body(body) do
-    # Tenta encontrar JSON valido removendo prefixos de chunk hex
     cleaned =
       body
       |> String.replace(~r/^[0-9a-fA-F]+\r\n/, "")

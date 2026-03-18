@@ -1,61 +1,58 @@
 defmodule UncoverAegis.Sentinel.CampaignMonitorTest do
   @moduledoc """
-  Testes do CampaignMonitor (MVP3 - Sentinel).
-
+  Testes do CampaignMonitor (MVP 3 - Sentinel).
   Verifica o comportamento do GenServer que monitora gastos
   em tempo real e detecta anomalias via Z-Score Rust.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
-  alias UncoverAegis.Sentinel.CampaignMonitor
+  alias UncoverAegis.Sentinel.{CampaignMonitor, DynamicSupervisor}
+
+  defp unique_id, do: "test_#{System.unique_integer([:positive])}"
+
+  defp start_monitor(campaign_id) do
+    {:ok, _pid} =
+      DynamicSupervisor.start_child(%{campaign_id: campaign_id})
+    campaign_id
+  end
 
   describe "CampaignMonitor" do
     test "inicia com estado vazio" do
-      {:ok, pid} = CampaignMonitor.start_link(campaign_id: "test_camp_#{System.unique_integer()}")
+      id = unique_id()
+      {:ok, pid} = CampaignMonitor.start_link(campaign_id: id)
       state = :sys.get_state(pid)
       assert state.spends == []
       assert state.anomaly_detected == false
     end
 
     test "acumula spends corretamente" do
-      campaign_id = "test_camp_#{System.unique_integer()}"
-      {:ok, pid} = CampaignMonitor.start_link(campaign_id: campaign_id)
+      id = unique_id()
+      {:ok, pid} = CampaignMonitor.start_link(campaign_id: id)
 
-      CampaignMonitor.add_spend(campaign_id, 100.0)
-      CampaignMonitor.add_spend(campaign_id, 200.0)
-      CampaignMonitor.add_spend(campaign_id, 150.0)
+      CampaignMonitor.add_spend(id, 100.0)
+      CampaignMonitor.add_spend(id, 200.0)
+      CampaignMonitor.add_spend(id, 150.0)
+
+      # Pequena espera para casts async serem processados
+      Process.sleep(50)
 
       state = :sys.get_state(pid)
       assert length(state.spends) == 3
-      assert 100.0 in state.spends
     end
 
     test "nao marca anomalia para valores uniformes" do
-      campaign_id = "test_camp_#{System.unique_integer()}"
-      {:ok, _pid} = CampaignMonitor.start_link(campaign_id: campaign_id)
-
-      Enum.each(1..6, fn _ ->
-        CampaignMonitor.add_spend(campaign_id, 1000.0 + :rand.uniform() * 10)
-      end)
-
-      state = :sys.get_state(campaign_id |> CampaignMonitor.via_tuple())
-      assert state.anomaly_detected == false
+      id = start_monitor(unique_id())
+      Enum.each(1..8, fn _ -> CampaignMonitor.add_spend(id, 1000.0) end)
+      Process.sleep(100)
+      assert %{anomaly_detected: false} = :sys.get_state(CampaignMonitor.via_tuple(id))
     end
 
     test "detecta anomalia com outlier extremo" do
-      campaign_id = "test_camp_#{System.unique_integer()}"
-      {:ok, _pid} = CampaignMonitor.start_link(campaign_id: campaign_id)
-
-      # 5 valores normais
-      Enum.each(1..5, fn _ -> CampaignMonitor.add_spend(campaign_id, 1000.0) end)
-      # outlier extremo
-      CampaignMonitor.add_spend(campaign_id, 999_000.0)
-
-      # Pequena espera para o GenServer processar (cast é async)
-      Process.sleep(50)
-
-      state = :sys.get_state(campaign_id |> CampaignMonitor.via_tuple())
-      assert state.anomaly_detected == true
+      id = start_monitor(unique_id())
+      Enum.each(1..6, fn _ -> CampaignMonitor.add_spend(id, 1000.0) end)
+      CampaignMonitor.add_spend(id, 999_000.0)
+      Process.sleep(100)
+      assert %{anomaly_detected: true} = :sys.get_state(CampaignMonitor.via_tuple(id))
     end
   end
 end

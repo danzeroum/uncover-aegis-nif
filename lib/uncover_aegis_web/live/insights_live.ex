@@ -180,13 +180,13 @@ defmodule UncoverAegisWeb.InsightsLive do
         {:error, :llm, _} ->
           TelemetryStore.record(%{question: input, status: :error, blocked: false})
           %{role: :assistant, content: :not_understood, status: :not_understood,
-            icon: "\u{1F4AC}", example_questions: @example_questions}
+            icon: "💬", example_questions: @example_questions}
         {:error, :guardrail, reason} ->
           TelemetryStore.record(%{question: input, status: :blocked, blocked: true})
-          %{role: :assistant, content: "\u{1F6E1}\uFE0F Guardrail bloqueou: #{reason}", status: :blocked, icon: "\u{1F534}"}
+          %{role: :assistant, content: "🛡️ Guardrail bloqueou: #{reason}", status: :blocked, icon: "🔴"}
         {:error, :database, reason} ->
           TelemetryStore.record(%{question: input, status: :error, blocked: false})
-          %{role: :assistant, content: reason, status: :error, icon: "\u26A0\uFE0F"}
+          %{role: :assistant, content: reason, status: :error, icon: "⚠️"}
       end
     finish_response(socket, loading_id, response_msg)
   end
@@ -200,11 +200,11 @@ defmodule UncoverAegisWeb.InsightsLive do
         {:unsafe_sql, reason} ->
           TelemetryStore.record(%{question: "[SQL direto]", sql: sql, status: :blocked, blocked: true})
           %{role: :assistant,
-            content: "\u{1F6E1}\uFE0F Guardrail Rust BLOQUEOU esta query.\n\nMotivo: #{reason}",
-            status: :blocked, icon: "\u{1F534}"}
+            content: "🛡️ Guardrail Rust BLOQUEOU esta query.\n\nMotivo: #{reason}",
+            status: :blocked, icon: "🔴"}
         {:error, reason} ->
           TelemetryStore.record(%{question: "[SQL direto]", sql: sql, status: :error, blocked: false})
-          %{role: :assistant, content: reason, status: :error, icon: "\u26A0\uFE0F"}
+          %{role: :assistant, content: reason, status: :error, icon: "⚠️"}
       end
     finish_response(socket, loading_id, response_msg)
   end
@@ -239,34 +239,34 @@ defmodule UncoverAegisWeb.InsightsLive do
       <div class="px-6 py-4 border-b border-gray-200 bg-white shadow-sm">
         <div class="flex items-center justify-between">
           <div>
-            <h1 class="text-xl font-bold text-gray-900">\u{1F6E1}\uFE0F Uncover Aegis</h1>
+            <h1 class="text-xl font-bold text-gray-900">🛡️ Uncover Aegis</h1>
             <p class="text-xs text-gray-500 mt-0.5">CMO Copilot — Insights seguros em tempo real</p>
           </div>
           <div class="flex items-center gap-2">
             <span :if={@tele_stats.avg_guardrail_us > 0}
               class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-              \u26A1 <%= @tele_stats.avg_guardrail_us %>µs
+              ⚡ <%= @tele_stats.avg_guardrail_us %>µs
             </span>
             <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-              \u2022 Guardrail Rust Ativo
+              • Guardrail Rust Ativo
             </span>
           </div>
         </div>
 
         <%!-- ABAS --%>
         <div class="flex gap-1 mt-4 border-b border-gray-100 overflow-x-auto">
-          <button phx-click="switch_tab" phx-value-tab="insights" class={tab_class(@active_tab == :insights)}>\u{1F4CA} Insights</button>
-          <button phx-click="switch_tab" phx-value-tab="campaigns" class={tab_class(@active_tab == :campaigns)}>\u{1F4CB} Campanhas</button>
-          <button phx-click="switch_tab" phx-value-tab="mmm" class={tab_class(@active_tab == :mmm)}>\u{1F9EA} Mix de Mídia</button>
+          <button phx-click="switch_tab" phx-value-tab="insights" class={tab_class(@active_tab == :insights)}>📊 Insights</button>
+          <button phx-click="switch_tab" phx-value-tab="campaigns" class={tab_class(@active_tab == :campaigns)}>📋 Campanhas</button>
+          <button phx-click="switch_tab" phx-value-tab="mmm" class={tab_class(@active_tab == :mmm)}>🧪 Mix de Mídia</button>
           <button phx-click="switch_tab" phx-value-tab="observability" class={tab_class(@active_tab == :observability)}>
-            \u{1F50D} Observabilidade
+            🔍 Observabilidade
             <span :if={@tele_stats.blocked_count > 0}
               class="ml-1.5 inline-flex items-center justify-center w-4 h-4 text-xs font-bold bg-orange-500 text-white rounded-full">
               <%= @tele_stats.blocked_count %>
             </span>
           </button>
           <button phx-click="switch_tab" phx-value-tab="sentinel" class={tab_class(@active_tab == :sentinel)}>
-            \u{1F6A8} Sentinel
+            🚨 Sentinel
             <span :if={@anomaly_count > 0}
               class="ml-1.5 inline-flex items-center justify-center w-4 h-4 text-xs font-bold bg-red-500 text-white rounded-full">
               <%= @anomaly_count %>
@@ -282,13 +282,13 @@ defmodule UncoverAegisWeb.InsightsLive do
         <div :if={@active_tab == :insights} class="flex flex-col h-full">
           <div :if={@sql_mode} class="mx-4 mt-3 p-3 bg-orange-50 border border-orange-200 rounded-lg">
             <p class="text-xs text-orange-700 font-medium">
-              \u{1F9EA} Modo SQL ativo — a query vai direto para o Guardrail Rust sem passar pelo LLM.
+              🧪 Modo SQL ativo — a query vai direto para o Guardrail Rust sem passar pelo LLM.
               Tente <code class="bg-orange-100 px-1 rounded">DELETE FROM campaign_metrics</code>.
             </p>
           </div>
           <div class="flex-1 overflow-y-auto p-4">
             <div :if={not @has_messages} class="flex flex-col items-center justify-center h-full text-center py-12">
-              <div class="text-5xl mb-4"><%= if @sql_mode, do: "\u{1F9EA}", else: "\u{1F4CA}" %></div>
+              <div class="text-5xl mb-4"><%= if @sql_mode, do: "🧪", else: "📊" %></div>
               <h2 class="text-lg font-semibold text-gray-700">
                 <%= if @sql_mode, do: "Modo SQL — Teste o Guardrail", else: "Pronto para analisar suas campanhas" %>
               </h2>
@@ -323,7 +323,7 @@ defmodule UncoverAegisWeb.InsightsLive do
                     <span class="text-sm text-gray-500">Validando pelo escudo Rust...</span>
                   </div>
                   <div :if={not Map.get(msg, :loading, false) and Map.get(msg, :content) == :not_understood}>
-                    <p class="text-sm text-gray-600"><span class="mr-1">\u{1F4AC}</span>Nao consegui gerar SQL. Experimente:</p>
+                    <p class="text-sm text-gray-600"><span class="mr-1">💬</span>Nao consegui gerar SQL. Experimente:</p>
                     <div class="mt-2 flex flex-wrap gap-1.5">
                       <button :for={q <- Map.get(msg, :example_questions, [])} phx-click="use_example" phx-value-question={q}
                         class="text-xs bg-gray-100 hover:bg-blue-50 hover:text-blue-700 border border-gray-200 hover:border-blue-300 rounded-full px-2.5 py-1 transition text-gray-600">
@@ -336,7 +336,7 @@ defmodule UncoverAegisWeb.InsightsLive do
                   </p>
                   <div :if={msg[:metadata]} class="mt-2 pt-2 border-t border-gray-200 space-y-1">
                     <p class="text-xs text-gray-400">
-                      \u{1F7E2} Guardrail Rust: <strong><%= msg.metadata.guardrail_us %>µs</strong>
+                      🟢 Guardrail Rust: <strong><%= msg.metadata.guardrail_us %>µs</strong>
                       &nbsp;|&nbsp; Query: <strong><%= msg.metadata.query_ms %>ms</strong>
                       &nbsp;|&nbsp; <%= msg.metadata.row_count %> linha(s)
                     </p>
@@ -351,7 +351,7 @@ defmodule UncoverAegisWeb.InsightsLive do
               <button phx-click="toggle_sql_mode"
                 class={["text-xs px-3 py-1 rounded-full border font-medium transition",
                   if(@sql_mode, do: "bg-orange-100 border-orange-300 text-orange-700", else: "bg-gray-100 border-gray-200 text-gray-500 hover:border-gray-400")]}>
-                <%= if @sql_mode, do: "\u{1F9EA} Modo SQL", else: "SQL direto" %>
+                <%= if @sql_mode, do: "🧪 Modo SQL", else: "SQL direto" %>
               </button>
             </div>
             <form phx-submit="send_message" class="flex gap-2">
@@ -372,10 +372,10 @@ defmodule UncoverAegisWeb.InsightsLive do
         <%!-- ABA: CAMPANHAS --%>
         <div :if={@active_tab == :campaigns} class="p-6">
           <div class="grid grid-cols-2 gap-4 mb-6 sm:grid-cols-4">
-            <.kpi_card title="Gasto Total" value={"R$ #{format_brl(@kpis.total_spend)}"} sub="todos os canais" color="blue" icon="\u{1F4B0}" />
-            <.kpi_card title="Cliques" value={format_number(@kpis.total_clicks)} sub="acumulado" color="green" icon="\u{1F91D}" />
-            <.kpi_card title="Conversões" value={format_number(@kpis.total_conversions)} sub="acumulado" color="purple" icon="\u2705" />
-            <.kpi_card title="CPC Médio" value={"R$ #{:erlang.float_to_binary(@kpis.avg_cpc + 0.0, decimals: 2)}"} sub="custo por clique" color="orange" icon="\u{1F3AF}" />
+            <.kpi_card title="Gasto Total" value={"R$ #{format_brl(@kpis.total_spend)}"} sub="todos os canais" color="blue" icon="💰" />
+            <.kpi_card title="Cliques" value={format_number(@kpis.total_clicks)} sub="acumulado" color="green" icon="🤝" />
+            <.kpi_card title="Conversões" value={format_number(@kpis.total_conversions)} sub="acumulado" color="purple" icon="✅" />
+            <.kpi_card title="CPC Médio" value={"R$ #{:erlang.float_to_binary(@kpis.avg_cpc + 0.0, decimals: 2)}"} sub="custo por clique" color="orange" icon="🎯" />
           </div>
           <div class="flex items-center gap-2 mb-4">
             <span class="text-sm text-gray-500 font-medium">Plataforma:</span>
@@ -423,7 +423,7 @@ defmodule UncoverAegisWeb.InsightsLive do
         <%!-- ABA: MIX DE MÍDIA --%>
         <div :if={@active_tab == :mmm} class="p-6">
           <div class="mb-6">
-            <h2 class="text-lg font-bold text-gray-900">\u{1F9EA} Mix de Mídia — Adstock MMM</h2>
+            <h2 class="text-lg font-bold text-gray-900">🧪 Mix de Mídia — Adstock MMM</h2>
             <p class="text-sm text-gray-500 mt-0.5">
               Powered by NIF Rust <code class="bg-gray-100 px-1 rounded text-xs">calculate_adstock</code>.
               Visualize o impacto acumulado de cada campanha e como a verba satura ao longo do tempo.
@@ -461,13 +461,13 @@ defmodule UncoverAegisWeb.InsightsLive do
             <div class="mt-5 flex justify-end">
               <button phx-click="mmm_calculate" disabled={@mmm_loading or is_nil(@mmm_selected)}
                 class="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed">
-                <%= if @mmm_loading, do: "\u23F3 Calculando...", else: "\u25B6\uFE0F Calcular Adstock" %>
+                <%= if @mmm_loading, do: "⏳ Calculando...", else: "▶️ Calcular Adstock" %>
               </button>
             </div>
           </div>
           <div :if={@mmm_result}>
             <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-5">
-              <p class="text-sm font-bold text-blue-800 mb-1">\u{1F4A1} Interpretação</p>
+              <p class="text-sm font-bold text-blue-800 mb-1">💡 Interpretação</p>
               <p class="text-sm text-blue-700">
                 A campanha <strong><%= @mmm_result.campaign_id %></strong> gerou um impacto acumulado (Adstock) de
                 <strong>R$ <%= format_brl(List.last(@mmm_result.adstock_values)) %></strong>
@@ -519,7 +519,7 @@ defmodule UncoverAegisWeb.InsightsLive do
             </p>
           </div>
           <div :if={is_nil(@mmm_result) and not @mmm_loading} class="flex flex-col items-center justify-center py-16 text-center">
-            <div class="text-5xl mb-4">\u{1F4C8}</div>
+            <div class="text-5xl mb-4">📈</div>
             <h3 class="text-lg font-semibold text-gray-700">Selecione uma campanha e calcule o Adstock</h3>
             <p class="text-sm text-gray-500 mt-2 max-w-md">
               O Adstock modela que anúncios têm efeito que persiste além do dia do investimento.
@@ -532,7 +532,7 @@ defmodule UncoverAegisWeb.InsightsLive do
         <div :if={@active_tab == :observability} class="p-6">
           <div class="flex items-center justify-between mb-6">
             <div>
-              <h2 class="text-lg font-bold text-gray-900">\u{1F50D} Observabilidade — Pipeline em Tempo Real</h2>
+              <h2 class="text-lg font-bold text-gray-900">🔍 Observabilidade — Pipeline em Tempo Real</h2>
               <p class="text-sm text-gray-500 mt-0.5">
                 Cada pergunta percorre 3 fases: LLM → Guardrail Rust → Query SQLite.
                 Este painel mostra a latência de cada fase e o histórico de acessos.
@@ -547,28 +547,28 @@ defmodule UncoverAegisWeb.InsightsLive do
               value={Integer.to_string(@tele_stats.total)}
               sub="nesta sessão"
               color="blue"
-              icon="\u{1F4E8}"
+              icon="📨"
             />
             <.kpi_card
               title="Bloqueios Guardrail"
               value={Integer.to_string(@tele_stats.blocked_count)}
               sub="queries DML rejeitadas"
               color="orange"
-              icon="\u{1F6E1}\uFE0F"
+              icon="🛡️"
             />
             <.kpi_card
               title="Guardrail Médio"
               value={"#{@tele_stats.avg_guardrail_us}µs"}
               sub="NIF Rust (validacao)"
               color="purple"
-              icon="\u26A1"
+              icon="⚡"
             />
             <.kpi_card
               title="Query Média"
               value={"#{@tele_stats.avg_query_ms}ms"}
               sub="SQLite (execucao)"
               color="green"
-              icon="\u{1F5C3}\uFE0F"
+              icon="🗃️"
             />
           </div>
 
@@ -577,34 +577,34 @@ defmodule UncoverAegisWeb.InsightsLive do
             <h3 class="text-sm font-semibold text-gray-700 mb-4">Como funciona o pipeline de segurança?</h3>
             <div class="flex items-center gap-2 flex-wrap">
               <div class="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2">
-                <span class="text-lg">\u{1F4AC}</span>
+                <span class="text-lg">💬</span>
                 <div>
                   <p class="text-xs font-bold text-blue-800">1. LLM</p>
                   <p class="text-xs text-blue-600">Pergunta → SQL</p>
                   <p class="text-xs text-blue-400">(Ollama / Mock)</p>
                 </div>
               </div>
-              <span class="text-gray-400 text-lg">\u2192</span>
+              <span class="text-gray-400 text-lg">→</span>
               <div class="flex items-center gap-2 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
-                <span class="text-lg">\u{1F6E1}\uFE0F</span>
+                <span class="text-lg">🛡️</span>
                 <div>
                   <p class="text-xs font-bold text-orange-800">2. Guardrail Rust</p>
                   <p class="text-xs text-orange-600">Valida READ-ONLY</p>
                   <p class="text-xs text-orange-400"><%= @tele_stats.avg_guardrail_us %>µs médio</p>
                 </div>
               </div>
-              <span class="text-gray-400 text-lg">\u2192</span>
+              <span class="text-gray-400 text-lg">→</span>
               <div class="flex items-center gap-2 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-                <span class="text-lg">\u{1F5C3}\uFE0F</span>
+                <span class="text-lg">🗃️</span>
                 <div>
                   <p class="text-xs font-bold text-green-800">3. SQLite</p>
                   <p class="text-xs text-green-600">Executa query</p>
                   <p class="text-xs text-green-400"><%= @tele_stats.avg_query_ms %>ms médio</p>
                 </div>
               </div>
-              <span class="text-gray-400 text-lg">\u2192</span>
+              <span class="text-gray-400 text-lg">→</span>
               <div class="flex items-center gap-2 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
-                <span class="text-lg">\u{1F4CA}</span>
+                <span class="text-lg">📊</span>
                 <div>
                   <p class="text-xs font-bold text-purple-800">4. Z-Score</p>
                   <p class="text-xs text-purple-600">Detecta anomalias</p>
@@ -617,7 +617,7 @@ defmodule UncoverAegisWeb.InsightsLive do
           <%!-- Timeline de eventos --%>
           <div class="bg-white rounded-xl border border-gray-200 overflow-hidden shadow-sm">
             <div class="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
-              <h3 class="text-sm font-semibold text-gray-700">\u{1F4DC} Histórico de Queries (últimas 20)</h3>
+              <h3 class="text-sm font-semibold text-gray-700">📜 Histórico de Queries (últimas 20)</h3>
               <span class="text-xs text-gray-400">Atualiza em tempo real via PubSub</span>
             </div>
             <div :if={@tele_events == []} class="px-4 py-10 text-center text-gray-400 text-sm">
@@ -668,7 +668,7 @@ defmodule UncoverAegisWeb.InsightsLive do
                           class="text-gray-300 hover:text-blue-500 transition flex-shrink-0"
                           title="Copiar SQL"
                         >
-                          \u{1F4CB}
+                          📋
                         </button>
                       </div>
                     </td>
@@ -681,7 +681,7 @@ defmodule UncoverAegisWeb.InsightsLive do
           <%!-- Nota técnica para a apresentação --%>
           <div class="mt-6 bg-gray-50 border border-gray-200 rounded-xl p-4">
             <p class="text-xs text-gray-500">
-              \u26A1 <strong>Por que o Guardrail Rust mede em microsegundos?</strong>
+              ⚡ <strong>Por que o Guardrail Rust mede em microsegundos?</strong>
               O NIF <code>validate_read_only_sql</code> roda em Rust nativo dentro da BEAM —
               sem serialização, sem HTTP, sem overhead de processo. É tipicamente
               <strong>100× mais rápido</strong> que uma validação equivalente em Elixir puro
@@ -696,7 +696,7 @@ defmodule UncoverAegisWeb.InsightsLive do
         <div :if={@active_tab == :sentinel} class="p-6">
           <div class="flex items-center justify-between mb-4">
             <div>
-              <h2 class="text-lg font-bold text-gray-900">\u{1F6A8} Sentinel — Monitor de Anomalias</h2>
+              <h2 class="text-lg font-bold text-gray-900">🚨 Sentinel — Monitor de Anomalias</h2>
               <p class="text-sm text-gray-500 mt-0.5">
                 Alertas gerados pelo NIF Rust <code class="bg-gray-100 px-1 rounded text-xs">calculate_zscore</code>.
                 Um |Z| &gt; 3.0 indica anomalia com 99.7% de confiança.
@@ -708,7 +708,7 @@ defmodule UncoverAegisWeb.InsightsLive do
             </div>
           </div>
           <div :if={@anomaly_alerts == []} class="flex flex-col items-center justify-center py-16 text-center">
-            <div class="text-5xl mb-4">\u2705</div>
+            <div class="text-5xl mb-4">✅</div>
             <h3 class="text-lg font-semibold text-gray-700">Nenhuma anomalia detectada</h3>
             <p class="text-sm text-gray-500 mt-2 max-w-sm">
               O Sentinel monitora gastos via PubSub. Quando um Z-Score ultrapassar 3.0, o alerta aparece aqui.
@@ -720,7 +720,7 @@ defmodule UncoverAegisWeb.InsightsLive do
                 if(alert.severity == :critical, do: "bg-red-50 border-red-200", else: "bg-yellow-50 border-yellow-200")]}
             >
               <div class="flex items-start gap-3">
-                <span class="text-2xl mt-0.5"><%= if alert.severity == :critical, do: "\u{1F534}", else: "\u{1F7E1}" %></span>
+                <span class="text-2xl mt-0.5"><%= if alert.severity == :critical, do: "🔴", else: "🟡" %></span>
                 <div>
                   <p class={["font-semibold text-sm", if(alert.severity == :critical, do: "text-red-800", else: "text-yellow-800")]}>
                     <%= if alert.severity == :critical, do: "Anomalia Crítica", else: "Anomalia Detectada" %>
@@ -747,11 +747,11 @@ defmodule UncoverAegisWeb.InsightsLive do
                 </div>
               </div>
               <button phx-click="dismiss_alert" phx-value-id={alert.id}
-                class={["text-sm ml-2 mt-0.5", if(alert.severity == :critical, do: "text-red-400 hover:text-red-600", else: "text-yellow-400 hover:text-yellow-600")]}>\u2715</button>
+                class={["text-sm ml-2 mt-0.5", if(alert.severity == :critical, do: "text-red-400 hover:text-red-600", else: "text-yellow-400 hover:text-yellow-600")]}>✕</button>
             </div>
           </div>
           <div class="mt-8 bg-blue-50 border border-blue-200 rounded-xl p-5">
-            <h3 class="text-sm font-bold text-blue-800 mb-2">\u{1F4D8} O que é o Z-Score?</h3>
+            <h3 class="text-sm font-bold text-blue-800 mb-2">📘 O que é o Z-Score?</h3>
             <p class="text-sm text-blue-700">
               O Z-Score mede quantos <strong>desvios padrão</strong> um gasto está afastado da média histórica.
               Acima de <strong>3.0</strong> é estatisticamente incomum — pode indicar bug, fraude ou oportunidade.
@@ -878,7 +878,7 @@ defmodule UncoverAegisWeb.InsightsLive do
           conversions: sum(m.conversions),
           impressions: sum(m.impressions)
         }
-    query = if platform == "all", do: query, else: from m in query, where: m.platform == ^platform
+    query = if platform == "all", do: query, else: from(m in query, where: m.platform == ^platform)
     Repo.all(query)
     |> Enum.map(fn row ->
       cpc = if row.clicks > 0, do: row.spend / row.clicks, else: 0.0
@@ -918,12 +918,12 @@ defmodule UncoverAegisWeb.InsightsLive do
         end)
         |> Enum.join("\n")
       end
-    anomaly_note = if result[:anomaly], do: "\n\n\u26A0\uFE0F Anomalia (Z: #{Float.round(result.z_score, 2)})", else: ""
+    anomaly_note = if result[:anomaly], do: "\n\n⚠️ Anomalia (Z: #{Float.round(result.z_score, 2)})", else: ""
     %{
       role: :assistant,
       content: content <> anomaly_note,
       status: :ok,
-      icon: "\u{1F4CB}",
+      icon: "📋",
       metadata: %{
         sql: result[:metadata][:sql] || "",
         guardrail_us: result[:metadata][:guardrail_us] || 0,
@@ -959,9 +959,9 @@ defmodule UncoverAegisWeb.InsightsLive do
   defp tele_status_badge(:error),   do: "inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-red-100 text-red-700"
   defp tele_status_badge(_),        do: "inline-block px-2 py-0.5 rounded-full text-xs font-bold bg-gray-100 text-gray-700"
 
-  defp tele_status_label(:ok),      do: "\u2705 ok"
-  defp tele_status_label(:blocked), do: "\u{1F6E1}\uFE0F bloqueado"
-  defp tele_status_label(:error),   do: "\u26A0\uFE0F erro"
+  defp tele_status_label(:ok),      do: "✅ ok"
+  defp tele_status_label(:blocked), do: "🛡️ bloqueado"
+  defp tele_status_label(:error),   do: "⚠️ erro"
   defp tele_status_label(_),        do: "?"
 
   defp latency_bar_class(v, :us) when v < 500,  do: "text-xs font-mono font-bold text-green-600"

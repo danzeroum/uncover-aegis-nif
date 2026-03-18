@@ -1,8 +1,8 @@
 defmodule UncoverAegis.Insights.OllamaClient do
   @moduledoc """
   Cliente HTTP para o Ollama rodando localmente.
-  Usa :gen_tcp com timeout de 60s para cobrir cold start do qwen2.5-coder:7b.
-  Suporta chunked transfer encoding (Transfer-Encoding: chunked).
+  Usa :gen_tcp com HTTP/1.0 para evitar chunked transfer encoding.
+  Timeout de 60s para cobrir cold start do qwen2.5-coder:7b.
   """
 
   require Logger
@@ -78,21 +78,9 @@ defmodule UncoverAegis.Insights.OllamaClient do
             Logger.warning("[OllamaClient] Resposta inesperada: #{inspect(other)}")
             {:error, :cannot_answer}
 
-          {:error, _} ->
-            # Body pode estar em chunked transfer encoding
-            case decode_chunked(response_body) do
-              {:ok, decoded} ->
-                case Jason.decode(decoded) do
-                  {:ok, %{"response" => raw}} -> parse_response(raw)
-                  _ ->
-                    Logger.warning("[OllamaClient] JSON invalido apos decode chunked: #{String.slice(decoded, 0, 120)}")
-                    {:error, :cannot_answer}
-                end
-
-              {:error, _} ->
-                Logger.warning("[OllamaClient] Falha ao decodificar chunked body: #{String.slice(response_body, 0, 80)}")
-                {:error, :cannot_answer}
-            end
+          {:error, reason} ->
+            Logger.warning("[OllamaClient] JSON invalido: #{inspect(reason)} | body: #{String.slice(response_body, 0, 120)}")
+            {:error, :cannot_answer}
         end
 
       {:error, reason} ->
@@ -102,61 +90,24 @@ defmodule UncoverAegis.Insights.OllamaClient do
   end
 
   # ---------------------------------------------------------------------------
-  # Chunked Transfer Encoding decoder (RFC 7230)
-  # Formato: <tamanho_hex>\r\n<dados>\r\n ... 0\r\n\r\n
-  # ---------------------------------------------------------------------------
-
-  defp decode_chunked(body) do
-    try do
-      result = do_decode_chunks(body, [])
-      {:ok, IO.iodata_to_binary(result)}
-    rescue
-      _ -> {:error, :invalid_chunked}
-    end
-  end
-
-  defp do_decode_chunks("", acc), do: Enum.reverse(acc)
-  defp do_decode_chunks("\r\n" <> rest, acc), do: do_decode_chunks(rest, acc)
-
-  defp do_decode_chunks(data, acc) do
-    case String.split(data, "\r\n", parts: 2) do
-      [size_hex, rest] ->
-        size = String.trim(size_hex) |> String.to_integer(16)
-
-        if size == 0 do
-          # Chunk final "0\r\n\r\n" — fim do body
-          Enum.reverse(acc)
-        else
-          <<chunk::binary-size(size), remainder::binary>> = rest
-          do_decode_chunks(remainder, [chunk | acc])
-        end
-
-      _ ->
-        # Body nao e chunked valido — retorna como esta
-        Enum.reverse([data | acc])
-    end
-  end
-
-  # ---------------------------------------------------------------------------
-  # HTTP/1.1 via :gen_tcp puro
+  # HTTP/1.0 via :gen_tcp puro
+  # HTTP/1.0: sem chunked encoding, servidor fecha conexao ao terminar
   # ---------------------------------------------------------------------------
 
   defp tcp_post(body) do
     content_length = byte_size(body)
 
     request =
-      "POST #{@ollama_path} HTTP/1.1\r\n" <>
+      "POST #{@ollama_path} HTTP/1.0\r\n" <>
         "Host: localhost:#{@ollama_port}\r\n" <>
         "Content-Type: application/json\r\n" <>
         "Content-Length: #{content_length}\r\n" <>
-        "Connection: close\r\n" <>
         "\r\n" <>
         body
 
     case :gen_tcp.connect(@ollama_host, @ollama_port, [:binary, active: false], @connect_timeout) do
       {:ok, socket} ->
         :ok = :gen_tcp.send(socket, request)
-        :inet.setopts(socket, [{:send_timeout, @recv_timeout}])
         result = recv_all(socket, "")
         :gen_tcp.close(socket)
 

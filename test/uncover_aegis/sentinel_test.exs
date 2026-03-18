@@ -5,8 +5,8 @@ defmodule UncoverAegis.Sentinel.CampaignMonitorTest do
   Verifica o comportamento do GenServer que monitora gastos
   em tempo real e detecta anomalias via Z-Score Rust.
 
-  Nota de design: o estado usa `alert_count` para rastrear anomalias
-  (incrementado a cada Z-Score > 3.0) e `last_z_score` para o Z mais recente.
+  Nota de design: o estado usa `alert_count` (incrementado a cada
+  Z-Score > 3.0) e `last_z_score` para o Z mais recente.
   """
   use ExUnit.Case, async: false
 
@@ -46,22 +46,30 @@ defmodule UncoverAegis.Sentinel.CampaignMonitorTest do
 
     test "nao marca anomalia para valores uniformes" do
       id = start_monitor(unique_id())
-      Enum.each(1..8, fn _ -> CampaignMonitor.add_spend(id, 1000.0) end)
-      # get_state e sincrono: garante processamento dos casts
+      Enum.each(1..10, fn _ -> CampaignMonitor.add_spend(id, 1000.0) end)
+      # get_state e call sincrono: drena a fila de casts antes de verificar
       state = CampaignMonitor.get_state(id)
       assert state.alert_count == 0
     end
 
     test "detecta anomalia com outlier extremo e incrementa alert_count" do
       id = start_monitor(unique_id())
-      # 6 valores uniformes para estabelecer baseline
-      Enum.each(1..6, fn _ -> CampaignMonitor.add_spend(id, 1000.0) end)
-      # Outlier extremo: 100x a media
-      CampaignMonitor.add_spend(id, 100_000.0)
+
+      # 20 valores uniformes para baseline estatistico solido.
+      # Com N grande, desvio padrao converge e Z do outlier supera 3.0.
+      Enum.each(1..20, fn _ -> CampaignMonitor.add_spend(id, 1000.0) end)
+
+      # Outlier extremo: 500x a media -> Z-Score >> 3.0
+      CampaignMonitor.add_spend(id, 500_000.0)
+
       # get_state e call sincrono: garante processamento de todos os casts anteriores
       state = CampaignMonitor.get_state(id)
-      assert state.alert_count >= 1
-      assert abs(state.last_z_score) > 3.0
+
+      assert state.alert_count >= 1,
+             "Esperava alert_count >= 1, got #{state.alert_count} | last_z=#{state.last_z_score}"
+
+      assert abs(state.last_z_score) > 3.0,
+             "Esperava |Z| > 3.0, got #{state.last_z_score}"
     end
   end
 end

@@ -8,7 +8,7 @@ defmodule UncoverAegis.Application do
       UncoverAegis.Repo,
       {Phoenix.PubSub, name: UncoverAegis.PubSub},
       UncoverAegisWeb.Endpoint,
-      UncoverAegis.AnomalyDetector,
+      UncoverAegis.Sentinel.DynamicSupervisor,
       UncoverAegis.TelemetryStore
     ]
 

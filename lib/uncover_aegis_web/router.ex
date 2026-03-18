@@ -12,36 +12,22 @@ defmodule UncoverAegisWeb.Router do
 
   pipeline :api do
     plug :accepts, ["json"]
+    plug UncoverAegisWeb.Plugs.RequestLogger
   end
-
-  # ---------------------------------------------------------------------------
-  # Browser — LiveView
-  # ---------------------------------------------------------------------------
 
   scope "/", UncoverAegisWeb do
     pipe_through :browser
-
     live "/", InsightsLive
   end
 
-  # ---------------------------------------------------------------------------
-  # API REST
-  # ---------------------------------------------------------------------------
-
   scope "/api", UncoverAegisWeb.Api do
     pipe_through :api
-
-    # Health check — usado por load balancers e monitoramento
     get "/health", HealthController, :index
   end
 
   scope "/api/v1", UncoverAegisWeb.Api do
     pipe_through :api
-
-    # Insights conversacional (NL -> SQL ou SQL direto)
     post "/insights/query", InsightsController, :query
-
-    # Metricas de campanhas com filtros
     get "/campaigns/metrics", MetricsController, :index
   end
 end

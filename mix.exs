@@ -9,6 +9,12 @@ defmodule UncoverAegis.MixProject do
       start_permanent: Mix.env() == :prod,
       deps: deps(),
       aliases: aliases(),
+      test_coverage: [tool: ExCoveralls],
+      preferred_cli_env: [
+        coveralls: :test,
+        "coveralls.detail": :test,
+        "coveralls.html": :test
+      ],
       description: "Motor unificado de governanca de IA para MarTech: ingestao segura, insights controlados e monitoramento preditivo.",
       source_url: "https://github.com/danzeroum/uncover-aegis-nif"
     ]
@@ -23,25 +29,20 @@ defmodule UncoverAegis.MixProject do
 
   defp deps do
     [
-      # NIF bridge: compila Rust e carrega como biblioteca dinamica na BEAM
       {:rustler, "~> 0.36.0"},
-
-      # Banco de dados SQLite leve para demonstracao e testes
       {:ecto_sqlite3, "~> 0.18.0"},
       {:ecto_sql, "~> 3.11"},
-
-      # --- MVP 4: Web e LiveView ---
-      # Phoenix 1.7 + LiveView 0.20 sem pipeline de assets (CDN)
       {:phoenix, "~> 1.7.11"},
       {:phoenix_live_view, "~> 0.20.14"},
       {:bandit, "~> 1.0"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      # Cobertura de codigo
+      {:excoveralls, "~> 0.18", only: :test}
     ]
   end
 
   defp aliases do
     [
-      # Prepara o ambiente de teste criando e migrando o banco em memoria
       setup: ["deps.get", "ecto.create", "ecto.migrate"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"]
     ]

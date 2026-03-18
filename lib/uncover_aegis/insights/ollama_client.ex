@@ -38,11 +38,12 @@ defmodule UncoverAegis.Insights.OllamaClient do
       - conversions INTEGER NOT NULL
       - date DATE NOT NULL              -- format: YYYY-MM-DD
 
-    KEY MARKETING METRICS (use these formulas when relevant):
-      - CPC (Cost per Click):       ROUND(SUM(spend) / NULLIF(SUM(clicks), 0), 2)
-      - CPA (Cost per Acquisition): ROUND(SUM(spend) / NULLIF(SUM(conversions), 0), 2)
+    KEY MARKETING METRICS — always use CAST(... AS REAL) to avoid integer division in SQLite:
+      - CPC (Cost per Click):       ROUND(CAST(SUM(spend) AS REAL) / NULLIF(SUM(clicks), 0), 2)
+      - CPA (Cost per Acquisition): ROUND(CAST(SUM(spend) AS REAL) / NULLIF(SUM(conversions), 0), 2)
       - CVR (Conversion Rate):      ROUND(CAST(SUM(conversions) AS REAL) / NULLIF(SUM(clicks), 0), 4)
       - CTR (Click-Through Rate):   ROUND(CAST(SUM(clicks) AS REAL) / NULLIF(SUM(impressions), 0), 4)
+      - ROAS (Return on Ad Spend):  ROUND(CAST(SUM(conversions) AS REAL) * avg_order_value / NULLIF(SUM(spend), 0), 2)
 
     STRICT RULES:
     1. Respond with ONLY the SQL query. No explanation, no markdown, no code blocks.
@@ -51,6 +52,7 @@ defmodule UncoverAegis.Insights.OllamaClient do
     4. Use standard SQLite syntax.
     5. Always use meaningful column aliases (AS) for aggregations.
     6. NEVER add WHERE on date unless the question explicitly asks about a specific date or period.
+    7. ALWAYS use CAST(... AS REAL) when dividing integer columns to avoid integer division.
     """
   end
 

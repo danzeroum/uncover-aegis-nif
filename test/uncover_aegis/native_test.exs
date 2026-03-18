@@ -11,7 +11,7 @@ defmodule UncoverAegis.NativeTest do
 
   alias UncoverAegis.Native
 
-  describe "validate_read_only_sql/1 — queries permitidas" do
+  describe "validate_read_only_sql/1 -- queries permitidas" do
     test "aceita SELECT simples" do
       assert {:ok, _} = Native.validate_read_only_sql("SELECT * FROM campaign_metrics")
     end
@@ -32,7 +32,7 @@ defmodule UncoverAegis.NativeTest do
     end
   end
 
-  describe "validate_read_only_sql/1 — queries bloqueadas" do
+  describe "validate_read_only_sql/1 -- queries bloqueadas" do
     test "bloqueia DELETE" do
       assert {:unsafe_sql, reason} = Native.validate_read_only_sql("DELETE FROM campaign_metrics")
       assert is_binary(reason)
@@ -54,11 +54,10 @@ defmodule UncoverAegis.NativeTest do
                Native.validate_read_only_sql("UPDATE campaign_metrics SET spend = 0")
     end
 
-    test "bloqueia tentativa de injecao via comentario" do
-      # Tecnica comum: encerrar SELECT com ; e adicionar DML
-      sql = "SELECT * FROM campaign_metrics; DROP TABLE campaign_metrics --"
+    test "bloqueia tentativa de injecao com multiplas statements" do
+      sql = "SELECT * FROM campaign_metrics; DROP TABLE campaign_metrics"
+      # Deve bloquear (DROP presente) ou aceitar apenas o SELECT
       result = Native.validate_read_only_sql(sql)
-      # Deve bloquear OU retornar apenas o SELECT (dependendo da impl Rust)
       assert match?({:unsafe_sql, _}, result) or match?({:ok, _}, result)
     end
 
@@ -74,26 +73,35 @@ defmodule UncoverAegis.NativeTest do
   end
 
   describe "calculate_zscore/1" do
-    test "retorna 0.0 para lista vazia" do
+    test "retorna :insufficient_data para lista vazia" do
       assert {:insufficient_data, _} = Native.calculate_zscore([])
     end
 
-    test "retorna 0.0 para lista com um elemento" do
+    test "retorna :insufficient_data para lista com um elemento" do
       assert {:insufficient_data, _} = Native.calculate_zscore([100.0])
     end
 
-    test "detecta anomalia estatistica com Z-Score alto" do
-      # Valores normais + um outlier extremo
-      spends = [100.0, 105.0, 98.0, 102.0, 99.0, 103.0, 9999.0]
+    test "detecta anomalia com outlier extremo (Z-Score > 2.0)" do
+      # 5 valores uniformes + 1 outlier extremo (100x a media)
+      # Com N=6: Z do outlier = (100000 - 16683) / 40825 ~= 2.04
+      # Usamos > 2.0 pois com N pequeno o Z-Score e atenuado
+      spends = [1000.0, 1000.0, 1000.0, 1000.0, 1000.0, 100_000.0]
       assert {:ok, z} = Native.calculate_zscore(spends)
-      # O outlier deve gerar Z-Score > 3.0
-      assert abs(z) > 3.0
+      assert abs(z) > 2.0
     end
 
     test "retorna Z-Score baixo para dados uniformes" do
       spends = [100.0, 101.0, 99.0, 100.5, 100.0, 99.5]
       assert {:ok, z} = Native.calculate_zscore(spends)
       assert abs(z) < 1.0
+    end
+
+    test "detecta anomalia forte com N grande e outlier muito extremo" do
+      # Com N=20 valores uniformes + outlier extremo, Z-Score > 3.0
+      uniform = List.duplicate(1000.0, 20)
+      spends = uniform ++ [500_000.0]
+      assert {:ok, z} = Native.calculate_zscore(spends)
+      assert abs(z) > 3.0
     end
   end
 end

@@ -3,7 +3,7 @@ defmodule UncoverAegisWeb.InsightsLive do
   LiveView principal do MVP 4 — Assistente de Insights Conversacional.
 
   Dois modos de operacao:
-  - **Modo NL** (padrao): pergunta em portugues -> LlmMock -> Guardrail Rust -> Ecto
+  - **Modo NL** (padrao): pergunta em portugues -> Ollama -> Guardrail Rust -> Ecto
   - **Modo SQL** (demo): SQL direto -> Guardrail Rust -> Ecto (demonstra bloqueio)
   """
 
@@ -95,8 +95,14 @@ defmodule UncoverAegisWeb.InsightsLive do
         {:ok, result} ->
           format_success(result)
 
-        {:error, :llm, reason} ->
-          %{role: :assistant, content: reason, status: :not_understood, icon: "\u{1F4AC}"}
+        {:error, :llm, _reason} ->
+          %{
+            role: :assistant,
+            content: :not_understood,
+            status: :not_understood,
+            icon: "\u{1F4AC}",
+            example_questions: @example_questions
+          }
 
         {:error, :guardrail, reason} ->
           %{role: :assistant, content: "\u{1F6E1}\uFE0F Guardrail bloqueou: #{reason}", status: :blocked, icon: "\u{1F534}"}
@@ -156,7 +162,6 @@ defmodule UncoverAegisWeb.InsightsLive do
             <p class="text-xs text-gray-500 mt-0.5">CMO Copilot — Insights seguros em tempo real</p>
           </div>
           <div class="flex items-center gap-3">
-            <%# Toggle modo SQL %>
             <button
               phx-click="toggle_sql_mode"
               class={[
@@ -259,6 +264,7 @@ defmodule UncoverAegisWeb.InsightsLive do
         <div id="messages" phx-update="stream" class="space-y-3">
           <div :for={{dom_id, msg} <- @streams.messages} id={dom_id} class={message_wrapper_class(msg.role)}>
             <div class={message_bubble_class(msg)}>
+              <%# Loading spinner %>
               <div :if={Map.get(msg, :loading, false)} class="flex items-center gap-2">
                 <svg class="animate-spin h-4 w-4 text-gray-500" viewBox="0 0 24 24" fill="none">
                   <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -267,10 +273,30 @@ defmodule UncoverAegisWeb.InsightsLive do
                 <span class="text-sm text-gray-500">Validando pelo escudo Rust...</span>
               </div>
 
-              <p :if={not Map.get(msg, :loading, false)} class="text-sm whitespace-pre-wrap">
+              <%# Mensagem de pergunta nao entendida — com exemplos clicaveis %>
+              <div :if={not Map.get(msg, :loading, false) and Map.get(msg, :content) == :not_understood}>
+                <p class="text-sm text-gray-600">
+                  <span class="mr-1">\u{1F4AC}</span>
+                  Nao consegui gerar SQL para esta pergunta. Experimente:
+                </p>
+                <div class="mt-2 flex flex-wrap gap-1.5">
+                  <button
+                    :for={q <- Map.get(msg, :example_questions, [])}
+                    phx-click="use_example"
+                    phx-value-question={q}
+                    class="text-xs bg-gray-100 hover:bg-blue-50 hover:text-blue-700 border border-gray-200 hover:border-blue-300 rounded-full px-2.5 py-1 transition text-gray-600"
+                  >
+                    <%= q %>
+                  </button>
+                </div>
+              </div>
+
+              <%# Mensagem normal %>
+              <p :if={not Map.get(msg, :loading, false) and Map.get(msg, :content) != :not_understood} class="text-sm whitespace-pre-wrap">
                 <span :if={msg[:icon]} class="mr-1"><%= msg.icon %></span><%= msg.content %>
               </p>
 
+              <%# Metadata de observabilidade %>
               <div :if={msg[:metadata]} class="mt-2 pt-2 border-t border-gray-200 space-y-1">
                 <p class="text-xs text-gray-400">
                   \u{1F7E2} Guardrail Rust: <strong><%= msg.metadata.guardrail_us %>µs</strong>

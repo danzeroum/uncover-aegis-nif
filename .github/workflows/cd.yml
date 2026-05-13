@@ -54,5 +54,7 @@ jobs:
         run: flyctl deploy --image ghcr.io/${{ github.repository }}:${{ github.sha }} --yes
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
-        # FLY_API_TOKEN deve ser adicionado em Settings > Secrets do repositório
-        # Obter em: fly.io → Account → Access Tokens
+        # continue-on-error: mantém o pipeline ⚠️ amarelo em vez de ❌ vermelho
+        # enquanto FLY_API_TOKEN não estiver configurado em Settings > Secrets.
+        # Remover esta linha após criar a conta em fly.io e adicionar o token.
+        continue-on-error: true

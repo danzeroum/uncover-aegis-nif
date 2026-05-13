@@ -14,7 +14,8 @@ defmodule UncoverAegis.Sentinel.CampaignMonitor do
   3. **Disparar alertas** quando |Z-Score| > `@zscore_threshold` (3.0).
      Emite dois broadcasts via Phoenix.PubSub:
      - `"anomalies"` → LiveView (InsightsLive, aba Sentinel)
-     - `"sentinel:#{campaign_id}"` → GraphQL subscription (Absinthe)
+     - `"sentinel:CAMPAIGN_ID"` → GraphQL subscription (Absinthe)
+     - `"sentinel:all"` → GraphQL subscription global
   """
 
   use GenServer
@@ -95,11 +96,10 @@ defmodule UncoverAegis.Sentinel.CampaignMonitor do
             {:anomaly, state.campaign_id, z_score}
           )
 
-          # Broadcast 2: GraphQL Subscription (Absinthe — novo)
-          # Tópico granular por campanha permite filtro no cliente
+          # Broadcast 2: GraphQL Subscription (Absinthe — tópico por campanha)
           Phoenix.PubSub.broadcast(
             UncoverAegis.PubSub,
-            "sentinel:#{state.campaign_id}",
+            "sentinel:" <> state.campaign_id,
             alert_payload
           )
 

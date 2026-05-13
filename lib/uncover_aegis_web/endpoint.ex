@@ -16,9 +16,16 @@ defmodule UncoverAegisWeb.Endpoint do
     same_site: "Lax"
   ]
 
+  # Socket do LiveView (existente)
   socket "/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
+
+  # Socket para GraphQL Subscriptions via Absinthe (novo)
+  # Caminho: ws://host/socket/websocket
+  socket "/socket", UncoverAegisWeb.UserSocket,
+    websocket: true,
+    longpoll: false
 
   plug Plug.RequestId
   plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]

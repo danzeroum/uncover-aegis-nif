@@ -15,10 +15,18 @@ defmodule UncoverAegisWeb.Router do
     plug UncoverAegisWeb.Plugs.RequestLogger
   end
 
+  pipeline :graphql do
+    plug :accepts, ["json"]
+  end
+
+  # ── Browser / LiveView ────────────────────────────────────────────────────
+
   scope "/", UncoverAegisWeb do
     pipe_through :browser
     live "/", InsightsLive
   end
+
+  # ── REST API ──────────────────────────────────────────────────────────────
 
   scope "/api", UncoverAegisWeb.Api do
     pipe_through :api
@@ -34,5 +42,28 @@ defmodule UncoverAegisWeb.Router do
 
     # MVP 4 — Marketing Mix Modeling
     post "/mmm/adstock", AdstockController, :calculate
+  end
+
+  # ── GraphQL (Absinthe) ────────────────────────────────────────────────────
+  # Endpoint principal: POST /api/graphql
+  # Suporta queries, mutations e subscriptions via WebSocket
+
+  scope "/api" do
+    pipe_through :graphql
+
+    forward "/graphql",
+      to: Absinthe.Plug,
+      init_opts: [schema: UncoverAegisWeb.Schema]
+  end
+
+  # GraphiQL Playground (apenas ambiente de desenvolvimento)
+  if Mix.env() == :dev do
+    forward "/graphiql",
+      to: Absinthe.Plug.GraphiQL,
+      init_opts: [
+        schema:    UncoverAegisWeb.Schema,
+        interface: :playground,
+        socket:    UncoverAegisWeb.UserSocket
+      ]
   end
 end

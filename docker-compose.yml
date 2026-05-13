@@ -1,0 +1,40 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  app:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      PHX_HOST: localhost
+      PORT: 4000
+      SECRET_KEY_BASE: ${SECRET_KEY_BASE:-dev_secret_key_base_min_64_chars_replace_in_production}
+      DATABASE_PATH: /app/data/uncover_aegis.db
+      REDIS_HOST: redis
+    volumes:
+      - sqlite_data:/app/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis_data:
+  sqlite_data:

@@ -4,7 +4,7 @@ defmodule UncoverAegis.MixProject do
   def project do
     [
       app: :uncover_aegis,
-      version: "0.3.0",
+      version: "0.4.0",
       elixir: "~> 1.14",
       elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
@@ -16,24 +16,24 @@ defmodule UncoverAegis.MixProject do
         "coveralls.detail": :test,
         "coveralls.html": :test
       ],
-      description: "Motor unificado de governanca de IA para MarTech: ingestao segura, insights controlados e monitoramento preditivo.",
+      description: "Motor unificado de governanca de IA para MarTech: ingestao segura, insights controlados, monitoramento preditivo, cache Redis e API GraphQL.",
       source_url: "https://github.com/danzeroum/uncover-aegis-nif"
     ]
   end
 
-  # test/support so e compilado no ambiente :test
   defp elixirc_paths(:test), do: ["lib", "test/support"]
   defp elixirc_paths(_), do: ["lib"]
 
   def application do
     [
-      extra_applications: [:logger],
+      extra_applications: [:logger, :crypto],
       mod: {UncoverAegis.Application, []}
     ]
   end
 
   defp deps do
     [
+      # Core
       {:rustler, "~> 0.36.0"},
       {:ecto_sqlite3, "~> 0.18.0"},
       {:ecto_sql, "~> 3.11"},
@@ -41,6 +41,16 @@ defmodule UncoverAegis.MixProject do
       {:phoenix_live_view, "~> 0.20.14"},
       {:bandit, "~> 1.0"},
       {:jason, "~> 1.4"},
+
+      # NoSQL — Cache Redis para queries NL→SQL
+      {:redix, "~> 1.3"},
+
+      # GraphQL — API Absinthe
+      {:absinthe, "~> 1.7"},
+      {:absinthe_plug, "~> 1.5"},
+      {:absinthe_phoenix, "~> 2.0"},
+
+      # Test
       {:excoveralls, "~> 0.18", only: :test}
     ]
   end

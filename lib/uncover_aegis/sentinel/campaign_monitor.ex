@@ -1,19 +1,20 @@
 defmodule UncoverAegis.Sentinel.CampaignMonitor do
   @moduledoc """
-  GenServer que monitora os gastos de uma unica campanha de marketing.
+  GenServer que monitora os gastos de uma única campanha de marketing.
 
   ## Responsabilidades
 
-  1. **Manter historico** dos ultimos `@max_history` gastos em memoria
+  1. **Manter histórico** dos últimos `@max_history` gastos em memória
      (Ring Buffer — evita crescimento ilimitado e OOM em processos long-running).
 
-  2. **Delegar matematica** ao Rust: a cada novo gasto, envia o historico
+  2. **Delegar matemática** ao Rust: a cada novo gasto, envia o histórico
      para `Native.calculate_zscore/1` (NIF DirtyCpu) que retorna o Z-Score
-     do ultimo valor em relacao a media historica.
+     do último valor em relação à média histórica.
 
   3. **Disparar alertas** quando |Z-Score| > `@zscore_threshold` (3.0).
-     Emite broadcast via Phoenix.PubSub para notificar o LiveView em
-     tempo real (MVP4). Em producao: substituir por Slack/PagerDuty.
+     Emite dois broadcasts via Phoenix.PubSub:
+     - `"anomalies"` → LiveView (InsightsLive, aba Sentinel)
+     - `"sentinel:#{campaign_id}"` → GraphQL subscription (Absinthe)
   """
 
   use GenServer
@@ -25,7 +26,7 @@ defmodule UncoverAegis.Sentinel.CampaignMonitor do
   @max_history 50
 
   # ---------------------------------------------------------------------------
-  # API Publica
+  # API Pública
   # ---------------------------------------------------------------------------
 
   @spec start_link(String.t()) :: GenServer.on_start()
@@ -76,14 +77,37 @@ defmodule UncoverAegis.Sentinel.CampaignMonitor do
             "[AEGIS SENTINEL] \u{1F6A8} Anomalia na campanha '#{state.campaign_id}': " <>
               "Z-Score = #{Float.round(z_score, 2)} " <>
               "| Gasto atual: R$ #{amount} " <>
-              "| Historico (#{length(new_spends)} pontos)"
+              "| Histórico (#{length(new_spends)} pontos)"
           )
 
-          # MVP 4: broadcast para o LiveView via PubSub
+          alert_payload = %{
+            campaign_id: state.campaign_id,
+            z_score: z_score,
+            spend: amount,
+            severity: if(abs(z_score) >= 4.0, do: "critical", else: "warning"),
+            timestamp: DateTime.utc_now() |> DateTime.to_iso8601()
+          }
+
+          # Broadcast 1: LiveView (aba Sentinel — comportamento existente)
           Phoenix.PubSub.broadcast(
             UncoverAegis.PubSub,
             "anomalies",
             {:anomaly, state.campaign_id, z_score}
+          )
+
+          # Broadcast 2: GraphQL Subscription (Absinthe — novo)
+          # Tópico granular por campanha permite filtro no cliente
+          Phoenix.PubSub.broadcast(
+            UncoverAegis.PubSub,
+            "sentinel:#{state.campaign_id}",
+            alert_payload
+          )
+
+          # Broadcast 3: tópico global para subscriptions sem filtro
+          Phoenix.PubSub.broadcast(
+            UncoverAegis.PubSub,
+            "sentinel:all",
+            alert_payload
           )
 
           %{state | spends: new_spends, last_z_score: z_score, alert_count: state.alert_count + 1}

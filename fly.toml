@@ -1,0 +1,33 @@
+# Fly.io — Deploy Uncover Aegis
+# Região GRU (São Paulo) para latência mínima com anunciantes brasileiros
+app = "uncover-aegis"
+primary_region = "gru"
+
+[build]
+  image = "ghcr.io/danzeroum/uncover-aegis-nif:latest"
+
+[env]
+  PHX_HOST = "uncover-aegis.fly.dev"
+  PORT     = "4000"
+  MIX_ENV  = "prod"
+
+[http_service]
+  internal_port       = 4000
+  force_https         = true
+  auto_stop_machines  = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type       = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus     = 1
+  memory   = "512mb"
+
+[mounts]
+  source      = "aegis_data"
+  destination = "/app/data"

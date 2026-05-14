@@ -7,14 +7,6 @@ defmodule UncoverAegisWeb.Schema do
   - `POST /api/graphql`  — queries e mutations
   - `GET  /graphiql`     — Playground interativo (apenas dev)
 
-  ## Tipos
-
-  - `campaign_metric`  — métricas KPI de uma campanha
-  - `insight_result`   — resultado do pipeline NL→SQL com metadados
-  - `anomaly_info`     — Z-Score e flag de anomalia
-  - `adstock_result`   — saída do modelo MMM Adstock via NIF Rust
-  - `sentinel_alert`   — alerta de anomalia em tempo real
-
   ## Queries
 
   - `campaigns(platform, from, to, limit)` — lista métricas com filtros
@@ -29,8 +21,7 @@ defmodule UncoverAegisWeb.Schema do
 
   use Absinthe.Schema
 
-  alias UncoverAegis.{Insights, Native}
-  alias UncoverAegisWeb.Resolvers
+  alias UncoverAegis.{Insights, Native, CampaignMetric}
 
   # ---------------------------------------------------------------------------
   # Types
@@ -71,9 +62,9 @@ defmodule UncoverAegisWeb.Schema do
   @desc "Resultado do modelo Adstock MMM via NIF Rust calculate_adstock/4"
   object :adstock_result do
     field :campaign_id,      :string
-    field :decay,            :float,        description: "Carry-over entre períodos (0.0–1.0)"
-    field :alpha,            :float,        description: "Curvatura Hill de saturação"
-    field :half_sat,         :float,        description: "K: spend no ponto de 50% de saturação"
+    field :decay,            :float,          description: "Carry-over entre períodos (0.0–1.0)"
+    field :alpha,            :float,          description: "Curvatura Hill de saturação"
+    field :half_sat,         :float,          description: "K: spend no ponto de 50% de saturação"
     field :adstock_values,   list_of(:float), description: "Impacto acumulado por período"
     field :saturated_values, list_of(:float), description: "Saturação 0.0–1.0 por período"
     field :contribution_pct, list_of(:float), description: "% de contribuição por período"
@@ -101,8 +92,7 @@ defmodule UncoverAegisWeb.Schema do
       arg :limit,    :integer, default_value: 50
 
       resolve fn args, _ ->
-        metrics = UncoverAegis.CampaignMetric.list_metrics(args)
-        {:ok, metrics}
+        {:ok, CampaignMetric.list_metrics(args)}
       end
     end
 
@@ -151,11 +141,11 @@ defmodule UncoverAegisWeb.Schema do
     @desc "Calcula modelo Adstock MMM para uma campanha via NIF Rust"
     field :adstock, :adstock_result do
       arg :campaign_id, non_null(:string)
-      arg :decay,       :float, default_value: 0.7,     description: "Carry-over (0.0–1.0)"
-      arg :alpha,       :float, default_value: 2.0,     description: "Hill α: curvatura saturação"
+      arg :decay,       :float, default_value: 0.7, description: "Carry-over (0.0–1.0)"
+      arg :alpha,       :float, default_value: 2.0, description: "Hill α: curvatura saturação"
 
       resolve fn %{campaign_id: id} = args, _ ->
-        spends = UncoverAegis.CampaignMetric.get_spends_by_campaign(id)
+        spends = CampaignMetric.get_spends_by_campaign(id)
 
         if Enum.empty?(spends) do
           {:error, "Campanha '#{id}' não encontrada ou sem dados de spend"}
@@ -179,9 +169,7 @@ defmodule UncoverAegisWeb.Schema do
 
     @desc "Health check via GraphQL"
     field :health, :string do
-      resolve fn _, _ ->
-        {:ok, "ok — uncover-aegis v0.4.0"}
-      end
+      resolve fn _, _ -> {:ok, "ok — uncover-aegis v0.4.0"} end
     end
   end
 
@@ -201,18 +189,15 @@ defmodule UncoverAegisWeb.Schema do
       config fn args, _ ->
         topic =
           case args do
-            %{campaign_id: id} when is_binary(id) and id != "" ->
-              "sentinel:#{id}"
-            _ ->
-              "sentinel:all"
+            %{campaign_id: id} when is_binary(id) and id != "" -> "sentinel:" <> id
+            _ -> "sentinel:all"
           end
 
         {:ok, topic: topic}
       end
 
-      # Trigger: define qual campo do payload mapeia para o tipo sentinel_alert
       trigger :sentinel_alerts, topic: fn alert ->
-        ["sentinel:#{alert.campaign_id}", "sentinel:all"]
+        ["sentinel:" <> alert.campaign_id, "sentinel:all"]
       end
     end
   end

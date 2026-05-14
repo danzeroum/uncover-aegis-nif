@@ -63,13 +63,14 @@ defmodule UncoverAegis.Insights.OllamaClient do
           | {:error, :unavailable}
           | {:error, :not_understood}
   def generate_sql(question) when is_binary(question) do
-    body = Jason.encode!(%{
-      model: @model,
-      prompt: question,
-      system: system_prompt(),
-      stream: false,
-      options: %{temperature: 0.1, top_p: 0.9, num_predict: 200}
-    })
+    body =
+      Jason.encode!(%{
+        model: @model,
+        prompt: question,
+        system: system_prompt(),
+        stream: false,
+        options: %{temperature: 0.1, top_p: 0.9, num_predict: 200}
+      })
 
     case tcp_post(body) do
       {:ok, response_body} ->
@@ -82,7 +83,10 @@ defmodule UncoverAegis.Insights.OllamaClient do
             {:error, :cannot_answer}
 
           {:error, reason} ->
-            Logger.warning("[OllamaClient] JSON invalido: #{inspect(reason)} | body: #{String.slice(response_body, 0, 120)}")
+            Logger.warning(
+              "[OllamaClient] JSON invalido: #{inspect(reason)} | body: #{String.slice(response_body, 0, 120)}"
+            )
+
             {:error, :cannot_answer}
         end
 
@@ -119,9 +123,14 @@ defmodule UncoverAegis.Insights.OllamaClient do
           err -> err
         end
 
-      {:error, :econnrefused} -> {:error, :unavailable}
-      {:error, :timeout} -> {:error, :timeout}
-      {:error, reason} -> {:error, reason}
+      {:error, :econnrefused} ->
+        {:error, :unavailable}
+
+      {:error, :timeout} ->
+        {:error, :timeout}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 

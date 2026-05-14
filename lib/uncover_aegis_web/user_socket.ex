@@ -32,7 +32,7 @@ defmodule UncoverAegisWeb.UserSocket do
 
   # Absinthe usa um canal proprio para controlar subscriptions.
   # O padrao "__absinthe__:*" e reservado pela biblioteca.
-  channel "__absinthe__:*", Absinthe.Phoenix.Channel
+  channel("__absinthe__:*", Absinthe.Phoenix.Channel)
 
   @impl true
   def connect(_params, socket, _connect_info) do

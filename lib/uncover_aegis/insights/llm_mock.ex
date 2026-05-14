@@ -27,19 +27,28 @@ defmodule UncoverAegis.Insights.LlmMock do
   def generate_sql(question) when is_binary(question) do
     case normalize(question) do
       q when q in ["qual o gasto total", "gasto total", "total de gasto"] ->
-        {:ok, "SELECT platform, SUM(spend) AS total_spend FROM campaign_metrics GROUP BY platform ORDER BY total_spend DESC"}
+        {:ok,
+         "SELECT platform, SUM(spend) AS total_spend FROM campaign_metrics GROUP BY platform ORDER BY total_spend DESC"}
 
-      q when q in ["quais campanhas tiveram mais cliques", "campanhas com mais cliques", "top campanhas por cliques"] ->
-        {:ok, "SELECT campaign_id, SUM(clicks) AS total_clicks FROM campaign_metrics GROUP BY campaign_id ORDER BY total_clicks DESC LIMIT 5"}
+      q
+      when q in [
+             "quais campanhas tiveram mais cliques",
+             "campanhas com mais cliques",
+             "top campanhas por cliques"
+           ] ->
+        {:ok,
+         "SELECT campaign_id, SUM(clicks) AS total_clicks FROM campaign_metrics GROUP BY campaign_id ORDER BY total_clicks DESC LIMIT 5"}
 
       q when q in ["qual a taxa de conversao", "taxa de conversao", "conversao media"] ->
-        {:ok, "SELECT platform, AVG(CAST(conversions AS FLOAT) / NULLIF(clicks, 0)) AS conversion_rate FROM campaign_metrics GROUP BY platform ORDER BY conversion_rate DESC"}
+        {:ok,
+         "SELECT platform, AVG(CAST(conversions AS FLOAT) / NULLIF(clicks, 0)) AS conversion_rate FROM campaign_metrics GROUP BY platform ORDER BY conversion_rate DESC"}
 
       q when q in ["quais plataformas usamos", "plataformas ativas", "que plataformas temos"] ->
         {:ok, "SELECT DISTINCT platform FROM campaign_metrics ORDER BY platform"}
 
       q when q in ["qual o custo por clique", "cpc medio", "custo por clique"] ->
-        {:ok, "SELECT platform, AVG(spend / NULLIF(clicks, 0)) AS avg_cpc FROM campaign_metrics GROUP BY platform ORDER BY avg_cpc"}
+        {:ok,
+         "SELECT platform, AVG(spend / NULLIF(clicks, 0)) AS avg_cpc FROM campaign_metrics GROUP BY platform ORDER BY avg_cpc"}
 
       q when q in ["quantas campanhas temos", "numero de campanhas", "total campanhas"] ->
         {:ok, "SELECT COUNT(DISTINCT campaign_id) AS total_campaigns FROM campaign_metrics"}

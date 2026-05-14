@@ -13,16 +13,29 @@ defmodule UncoverAegisWeb.Api.InsightsControllerTest do
 
     Repo.insert_all("campaign_metrics", [
       %{
-        campaign_id: "camp_a", platform: "google", spend: 1000.0,
-        impressions: 10_000, clicks: 500, conversions: 50,
-        date: ~D[2026-03-10], inserted_at: now, updated_at: now
+        campaign_id: "camp_a",
+        platform: "google",
+        spend: 1000.0,
+        impressions: 10_000,
+        clicks: 500,
+        conversions: 50,
+        date: ~D[2026-03-10],
+        inserted_at: now,
+        updated_at: now
       },
       %{
-        campaign_id: "camp_b", platform: "meta", spend: 2000.0,
-        impressions: 20_000, clicks: 1_000, conversions: 100,
-        date: ~D[2026-03-10], inserted_at: now, updated_at: now
+        campaign_id: "camp_b",
+        platform: "meta",
+        spend: 2000.0,
+        impressions: 20_000,
+        clicks: 1_000,
+        conversions: 100,
+        date: ~D[2026-03-10],
+        inserted_at: now,
+        updated_at: now
       }
     ])
+
     :ok
   end
 

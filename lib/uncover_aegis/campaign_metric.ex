@@ -25,13 +25,13 @@ defmodule UncoverAegis.CampaignMetric do
   alias UncoverAegis.Repo
 
   schema "campaign_metrics" do
-    field :campaign_id, :string
-    field :platform, :string
-    field :spend, :float
-    field :impressions, :integer
-    field :clicks, :integer
-    field :conversions, :integer
-    field :reported_at, :utc_datetime
+    field(:campaign_id, :string)
+    field(:platform, :string)
+    field(:spend, :float)
+    field(:impressions, :integer)
+    field(:clicks, :integer)
+    field(:conversions, :integer)
+    field(:reported_at, :utc_datetime)
 
     timestamps(type: :utc_datetime)
   end
@@ -58,8 +58,9 @@ defmodule UncoverAegis.CampaignMetric do
   @spec list_metrics(map()) :: [%__MODULE__{}]
   def list_metrics(args \\ %{}) do
     query =
-      from m in __MODULE__,
+      from(m in __MODULE__,
         order_by: [desc: m.reported_at]
+      )
 
     query
     |> maybe_filter_platform(args[:platform])
@@ -88,27 +89,34 @@ defmodule UncoverAegis.CampaignMetric do
   # ---------------------------------------------------------------------------
 
   defp maybe_filter_platform(query, nil), do: query
+
   defp maybe_filter_platform(query, platform) do
     where(query, [m], m.platform == ^platform)
   end
 
   defp maybe_filter_from(query, nil), do: query
+
   defp maybe_filter_from(query, from_str) do
     case Date.from_iso8601(from_str) do
       {:ok, date} ->
         dt = DateTime.new!(date, ~T[00:00:00], "Etc/UTC")
         where(query, [m], m.reported_at >= ^dt)
-      _ -> query
+
+      _ ->
+        query
     end
   end
 
   defp maybe_filter_to(query, nil), do: query
+
   defp maybe_filter_to(query, to_str) do
     case Date.from_iso8601(to_str) do
       {:ok, date} ->
         dt = DateTime.new!(date, ~T[23:59:59], "Etc/UTC")
         where(query, [m], m.reported_at <= ^dt)
-      _ -> query
+
+      _ ->
+        query
     end
   end
 end

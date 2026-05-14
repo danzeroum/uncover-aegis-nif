@@ -45,25 +45,22 @@ defmodule UncoverAegisWeb.Router do
   end
 
   # ── GraphQL (Absinthe) ────────────────────────────────────────────────────
-  # Endpoint principal: POST /api/graphql
-  # Suporta queries, mutations e subscriptions via WebSocket
+  # Phoenix 1.7: forward/2 recebe o módulo plug diretamente, sem wrapper init_opts.
+  # As opções são passadas como terceiro argumento implicitamente pelo forward/2.
 
   scope "/api" do
     pipe_through :graphql
 
-    forward "/graphql",
-      to: Absinthe.Plug,
-      init_opts: [schema: UncoverAegisWeb.Schema]
+    # POST /api/graphql — queries, mutations e subscriptions
+    forward "/graphql", Absinthe.Plug, schema: UncoverAegisWeb.Schema
   end
 
   # GraphiQL Playground (apenas ambiente de desenvolvimento)
   if Mix.env() == :dev do
     forward "/graphiql",
-      to: Absinthe.Plug.GraphiQL,
-      init_opts: [
-        schema:    UncoverAegisWeb.Schema,
-        interface: :playground,
-        socket:    UncoverAegisWeb.UserSocket
-      ]
+      Absinthe.Plug.GraphiQL,
+      schema:    UncoverAegisWeb.Schema,
+      interface: :playground,
+      socket:    UncoverAegisWeb.UserSocket
   end
 end

@@ -13,7 +13,10 @@ ENV MIX_ENV=prod
 WORKDIR /app
 
 # Deps Elixir — cached em layer separada
-COPY mix.exs mix.lock ./
+# Usa glob (mix.lock*) para tolerar ausência do lockfile em repos novos.
+# IMPORTANTE: commite o mix.lock gerado por `mix deps.get` para builds
+# reproduzíveis e para ativar o cache de layer corretamente.
+COPY mix.exs mix.lock* ./
 RUN mix local.hex --force && mix local.rebar --force
 RUN mix deps.get --only prod
 

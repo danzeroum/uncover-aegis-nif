@@ -30,18 +30,21 @@ defmodule UncoverAegis.TelemetryStore do
 
   @doc "Registra um evento de telemetria."
   def record(attrs) when is_map(attrs) do
-    event = Map.merge(
-      %{id: System.unique_integer([:positive, :monotonic]),
-        at: DateTime.utc_now(),
-        question: "",
-        sql: "",
-        guardrail_us: 0,
-        query_ms: 0,
-        llm_ms: 0,
-        blocked: false,
-        status: :ok},
-      attrs
-    )
+    event =
+      Map.merge(
+        %{
+          id: System.unique_integer([:positive, :monotonic]),
+          at: DateTime.utc_now(),
+          question: "",
+          sql: "",
+          guardrail_us: 0,
+          query_ms: 0,
+          llm_ms: 0,
+          blocked: false,
+          status: :ok
+        },
+        attrs
+      )
 
     Agent.update(__MODULE__, fn state ->
       events = [event | state.events] |> Enum.take(@max_entries)
@@ -65,12 +68,14 @@ defmodule UncoverAegis.TelemetryStore do
       ok_events = Enum.filter(events, &(&1.status == :ok))
 
       avg_guardrail =
-        if ok_events == [], do: 0,
-        else: round(Enum.sum(Enum.map(ok_events, & &1.guardrail_us)) / length(ok_events))
+        if ok_events == [],
+          do: 0,
+          else: round(Enum.sum(Enum.map(ok_events, & &1.guardrail_us)) / length(ok_events))
 
       avg_query =
-        if ok_events == [], do: 0,
-        else: round(Enum.sum(Enum.map(ok_events, & &1.query_ms)) / length(ok_events))
+        if ok_events == [],
+          do: 0,
+          else: round(Enum.sum(Enum.map(ok_events, & &1.query_ms)) / length(ok_events))
 
       %{
         total: length(events),

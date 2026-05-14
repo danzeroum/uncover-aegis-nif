@@ -38,9 +38,9 @@ defmodule UncoverAegis.QueryCache do
     key = cache_key(question)
 
     case Redix.command(:redix, ["GET", key]) do
-      {:ok, nil}   -> :miss
-      {:ok, json}  -> {:hit, Jason.decode!(json)}
-      {:error, _}  -> :miss
+      {:ok, nil} -> :miss
+      {:ok, json} -> {:hit, Jason.decode!(json)}
+      {:error, _} -> :miss
     end
   end
 
@@ -49,7 +49,7 @@ defmodule UncoverAegis.QueryCache do
   """
   @spec put(String.t(), map()) :: :ok
   def put(question, result) do
-    key   = cache_key(question)
+    key = cache_key(question)
     value = Jason.encode!(result)
     Redix.command(:redix, ["SETEX", key, @ttl_seconds, value])
     :ok

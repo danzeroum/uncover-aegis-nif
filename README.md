@@ -1,11 +1,14 @@
 # 🛡️ Uncover Aegis
 
-> **Pipeline de insights para MarTech: NL → SQL → Guardrail Rust → Banco, com MMM Adstock, observabilidade em tempo real e detecção de anomalias.**
+> **Pipeline de insights para MarTech: NL → SQL → Guardrail Rust → Banco, com MMM Adstock, cache Redis, API GraphQL e deploy cloud no Fly.io.**
 
-[![Elixir](https://img.shields.io/badge/Elixir-1.16-blueviolet)](https://elixir-lang.org)
-[![Rust](https://img.shields.io/badge/Rust-1.75+-orange)](https://www.rust-lang.org)
+[![Elixir](https://img.shields.io/badge/Elixir-1.16%2F1.17-blueviolet)](https://elixir-lang.org)
+[![Rust](https://img.shields.io/badge/Rust-stable-orange)](https://www.rust-lang.org)
 [![Rustler](https://img.shields.io/badge/Rustler-0.36-green)](https://github.com/rusterlium/rustler)
 [![Phoenix](https://img.shields.io/badge/Phoenix-1.7-orange)](https://www.phoenixframework.org)
+[![Redis](https://img.shields.io/badge/Redis-7-red)](https://redis.io)
+[![GraphQL](https://img.shields.io/badge/GraphQL-Absinthe-e535ab)](https://absinthe-graphql.org)
+[![Fly.io](https://img.shields.io/badge/Deploy-Fly.io%20GRU-8b5cf6)](https://fly.io)
 [![CI](https://github.com/danzeroum/uncover-aegis-nif/actions/workflows/ci.yml/badge.svg)](https://github.com/danzeroum/uncover-aegis-nif/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -29,50 +32,195 @@ Em plataformas de **Media Mix Modeling e Media Measurement**, analistas e CMOs p
 ## 🏗️ Arquitetura
 
 ```
-Browser / API Client
+Browser / API Client / GraphQL Client
         │
         ▼
-┌──────────────────────────────────────────────────────┐
-│       Phoenix LiveView + REST API                    │
-│                                                      │
-│  LiveView: InsightsLive (5 abas via WebSocket)       │
-│    ├─ 📊 Insights      — chat NL→SQL                 │
-│    ├─ 📋 Campanhas     — tabela KPIs + filtros       │
-│    ├─ 🧪 Mix de Mídia  — Adstock MMM interativo      │
-│    ├─ 🔍 Observabilidade — telemetria em tempo real  │
-│    └─ 🚨 Sentinel      — alertas Z-Score ao vivo     │
-│                                                      │
-│  REST: POST /api/v1/insights/query                   │
-│         GET  /api/v1/campaigns/metrics               │
-│         GET  /api/health                             │
-└──────────────┬───────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│         Phoenix LiveView + REST API + GraphQL            │
+│                                                          │
+│  LiveView: InsightsLive (5 abas via WebSocket)           │
+│    ├─ 📊 Insights      — chat NL→SQL                     │
+│    ├─ 📋 Campanhas     — tabela KPIs + filtros           │
+│    ├─ 🧪 Mix de Mídia  — Adstock MMM interativo          │
+│    ├─ 🔍 Observabilidade — telemetria em tempo real      │
+│    └─ 🚨 Sentinel      — alertas Z-Score ao vivo         │
+│                                                          │
+│  REST:    POST /api/v1/insights/query                    │
+│           GET  /api/v1/campaigns/metrics                 │
+│           GET  /api/health                               │
+│                                                          │
+│  GraphQL: POST /api/graphql                              │
+│           GET  /graphiql  (Playground)                   │
+└──────────────┬───────────────────────────────────────────┘
                │
                ▼
-┌──────────────────────────────────────────────────────┐
-│             UncoverAegis.Insights                    │
-│                                                      │
-│  1. LLM (Ollama qwen2.5-coder:7b)                   │
-│     └─ fallback: LlmMock (perguntas fixas)          │
-│  2. validate_read_only_sql/1  ◄── Rust NIF           │
-│  3. Ecto.Adapters.SQLite3                            │
-│  4. calculate_zscore/1        ◄── Rust NIF           │
-│  5. TelemetryStore.record/1   ◄── ETS ring buffer    │
-└──────────────┬───────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│         Redis QueryCache (cache-aside, TTL 5 min)        │
+│  Cache hit  → resposta em <10ms sem invocar LLM          │
+│  Cache miss → pipeline completo abaixo                   │
+└──────────────┬───────────────────────────────────────────┘
                │
                ▼
-┌──────────────────────────────────────────────────────┐
-│        aegis_core (Rust, DirtyCpu NIFs)              │
-│                                                      │
-│  sanitize_and_validate/1   — PII + injection         │
-│  validate_read_only_sql/1  — SQL allowlist           │
-│  calculate_zscore/1        — Z-Score O(n)            │
-│  calculate_adstock/4       — Adstock + Hill MMM      │
-└──────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│              UncoverAegis.Insights                       │
+│                                                          │
+│  1. LLM (Ollama qwen2.5-coder:7b)                       │
+│     └─ fallback: LlmMock (perguntas fixas)              │
+│  2. validate_read_only_sql/1  ◄── Rust NIF               │
+│  3. Ecto.Adapters.SQLite3                                │
+│  4. calculate_zscore/1        ◄── Rust NIF               │
+│  5. TelemetryStore.record/1   ◄── ETS ring buffer        │
+└──────────────┬───────────────────────────────────────────┘
+               │
+               ▼
+┌──────────────────────────────────────────────────────────┐
+│         aegis_core (Rust, DirtyCpu NIFs)                 │
+│                                                          │
+│  sanitize_and_validate/1   — PII + injection             │
+│  validate_read_only_sql/1  — SQL allowlist               │
+│  calculate_zscore/1        — Z-Score O(n)                │
+│  calculate_adstock/4       — Adstock + Hill MMM          │
+└──────────────────────────────────────────────────────────┘
 ```
 
 **Sentinel (MVP 3):** cada campanha monitorada é um `GenServer` isolado supervisionado por `DynamicSupervisor`. Falhas são contidas por processo; o sistema segue operando.
 
 **TelemetryStore:** `GenServer` com ring buffer em ETS (máx. 500 eventos). Registra latência do guardrail, latência da query, status e SQL gerado. Emite eventos via `PubSub` para o LiveView atualizar em tempo real sem polling.
+
+**Redis QueryCache:** cache-aside para queries NL→SQL. Perguntas repetidas retornam em <10ms sem invocar o LLM. Fallback gracioso: Redis indisponível não quebra o pipeline — a requisição segue normalmente.
+
+---
+
+## 🐳 Docker — Início Rápido (Recomendado)
+
+A forma mais simples de rodar o projeto. Nenhuma instalação de Elixir, Rust ou Redis necessária na sua máquina.
+
+**Pré-requisito:** [Docker Desktop](https://www.docker.com/products/docker-desktop) ou `docker` + `docker compose` no Linux.
+
+```bash
+git clone https://github.com/danzeroum/uncover-aegis-nif.git
+cd uncover-aegis-nif
+
+# Build da imagem (compila Rust + Elixir internamente, ~5 min na 1ª vez)
+docker compose build
+
+# Sobe Redis + Phoenix
+docker compose up
+```
+
+Acesse **http://localhost:4000** quando aparecer `[info] Running UncoverAegisWeb.Endpoint`.
+
+### Rodar os testes via Docker
+
+```bash
+docker compose run --rm \
+  -e MIX_ENV=test \
+  app sh -c "mix deps.get && mix test --trace"
+```
+
+### Parar e limpar
+
+```bash
+docker compose down        # para os containers
+docker compose down -v     # para e apaga volumes (SQLite + Redis)
+```
+
+### O que o Dockerfile faz
+
+O build usa dois estágios:
+
+| Stage | Base | O que faz |
+|-------|------|-----------|
+| `builder` | `hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-slim` | Instala Rust stable, compila `aegis_core` via Cargo + gera release OTP |
+| `runtime` | `debian:bookworm-slim` | Copia apenas o release (~100–150 MB), sem toolchain de compilação |
+
+---
+
+## 🔗 API GraphQL
+
+Além da API REST, o Uncover Aegis expõe uma API GraphQL em `/api/graphql` via [Absinthe](https://absinthe-graphql.org). O playground interativo está disponível em `/graphiql` (apenas em dev).
+
+### Queries disponíveis
+
+```graphql
+# Health check
+{ health }
+
+# Insight NL→SQL com metadados de pipeline
+{
+  insight(question: "qual plataforma tem melhor CPA?") {
+    sql
+    row_count
+    cache_hit
+    guardrail_us
+    query_ms
+  }
+}
+
+# Insight por SQL direto (passa pelo guardrail Rust)
+{
+  insight(sql: "SELECT platform, SUM(spend) FROM campaign_metrics GROUP BY platform") {
+    sql
+    row_count
+    cache_hit
+  }
+}
+
+# Lista de campanhas com filtros
+{
+  campaigns(platform: "meta", from: "2026-03-10", to: "2026-03-14") {
+    campaign_id
+    platform
+    total_spend
+    cpa
+    cpc
+    cvr
+  }
+}
+
+# Adstock MMM direto via NIF Rust
+{
+  adstock(
+    campaign_id: "camp_meta_awareness"
+    decay: 0.7
+    alpha: 2.0
+  ) {
+    adstock_values
+    saturated_values
+    contribution_pct
+  }
+}
+```
+
+### Subscription — Alertas Sentinel em tempo real
+
+```graphql
+subscription {
+  sentinelAlerts {
+    campaign_id
+    z_score
+    spend
+    severity
+    detected_at
+  }
+}
+```
+
+O `CampaignMonitor` emite via `Phoenix.PubSub` ao detectar anomalia Z-Score, alimentando a subscription via WebSocket sem alterar a lógica de detecção existente.
+
+### Exemplos curl
+
+```bash
+# Query GraphQL
+curl -s -X POST http://localhost:4000/api/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query": "{ health }"}' | jq .
+
+# Insight com cache_hit
+curl -s -X POST http://localhost:4000/api/graphql \
+  -H "Content-Type: application/json" \
+  -d '{"query": "{ insight(question: \"qual o gasto total?\") { sql row_count cache_hit } }"}' | jq .
+```
 
 ---
 
@@ -81,7 +229,7 @@ Browser / API Client
 A interface principal (`/`) é um CMO Copilot com 5 abas em tempo real via WebSocket:
 
 ### 📊 Insights
-Chat em linguagem natural ou SQL direto. Cada mensagem percorre o pipeline completo: LLM → Guardrail Rust → SQLite → Z-Score. Modo SQL pode ser ativado para testar queries DML diretamente contra o guardrail.
+Chat em linguagem natural ou SQL direto. Cada mensagem percorre o pipeline completo: LLM → Cache Redis → Guardrail Rust → SQLite → Z-Score. Modo SQL pode ser ativado para testar queries DML diretamente contra o guardrail.
 
 ### 📋 Campanhas
 Tabela de KPIs com filtro por plataforma (Google, Meta, TikTok, LinkedIn). Exibe **CPC**, **CPA**, **CVR** calculados em tempo real. Cards de resumo com totais de gasto, cliques e conversões.
@@ -98,7 +246,7 @@ Modelagem interativa de Media Mix via NIF Rust `calculate_adstock/4`:
 ### 🔍 Observabilidade
 Telemetria em tempo real do pipeline, atualizada via PubSub a cada evento:
 - Cards: Queries Totais, Bloqueios Guardrail, Guardrail Médio (µs), Query Média (ms)
-- Diagrama visual do pipeline: LLM → Guardrail Rust → SQLite → Z-Score
+- Diagrama visual do pipeline: LLM → Cache Redis → Guardrail Rust → SQLite → Z-Score
 - Timeline das últimas 20 queries com status, latências coloridas e botão copiar SQL
 
 ### 🚨 Sentinel
@@ -149,8 +297,8 @@ curl http://localhost:4000/api/health
 ```json
 {
   "status": "ok",
-  "version": "0.3.0",
-  "timestamp": "2026-03-18T03:00:00Z",
+  "version": "0.4.0",
+  "timestamp": "2026-05-13T00:00:00Z",
   "checks": {
     "database":       { "status": "ok",  "latency_ms": 1 },
     "guardrail_rust": { "status": "ok",  "latency_us": 4 },
@@ -182,7 +330,8 @@ curl -X POST http://localhost:4000/api/v1/insights/query \
     "sql": "SELECT ...",
     "guardrail_us": 4521,
     "query_ms": 3,
-    "row_count": 2
+    "row_count": 2,
+    "cache_hit": false
   },
   "anomaly": { "detected": false, "z_score": 0.4 }
 }
@@ -223,6 +372,51 @@ curl 'http://localhost:4000/api/v1/campaigns/metrics?platform=meta&from=2026-03-
 
 ---
 
+## ☁️ Deploy — Fly.io (Região GRU — São Paulo)
+
+O projeto está configurado para deploy no [Fly.io](https://fly.io) na região `gru` (São Paulo), minimizando latência para anunciantes brasileiros.
+
+### Pré-requisitos
+
+```bash
+# Instalar flyctl
+curl -L https://fly.io/install.sh | sh
+fly auth login
+```
+
+### Deploy
+
+```bash
+# 1ª vez — criar app e volume para SQLite
+fly apps create uncover-aegis
+fly volumes create aegis_data --region gru --size 1
+
+# Configurar secret obrigatório
+fly secrets set SECRET_KEY_BASE=$(mix phx.gen.secret)
+
+# Deploy (usa a imagem já buildada no CI via GHCR)
+fly deploy
+```
+
+### Variáveis de ambiente no Fly.io
+
+| Variável | Valor | Descrição |
+|---|---|---|
+| `SECRET_KEY_BASE` | gerado com `mix phx.gen.secret` | **Obrigatório** — chave Phoenix |
+| `PHX_HOST` | `uncover-aegis.fly.dev` | Host público |
+| `REDIS_HOST` | IP do Redis Upstash ou interno | Cache QueryCache |
+| `DATABASE_PATH` | `/app/data/uncover_aegis.db` | Volume persistente |
+
+### CD automático (GitHub Actions)
+
+O arquivo `.github/workflows/cd.yml` faz deploy automático após CI verde no `main`:
+
+```
+push main → CI verde → docker build → push GHCR → fly deploy (gru)
+```
+
+---
+
 ## 💼 MVP 1 — Ingestão Segura de Relatórios
 
 Sanitiza textos de relatórios antes de envio para LLM externa:
@@ -247,6 +441,10 @@ UncoverAegis.Pipeline.process_campaigns([
 ```
 CMO digita: "qual plataforma tem melhor ROAS?"
         │
+        ▼
+Redis QueryCache  (cache-aside, TTL 5 min)
+        │  cache hit  → resposta em <10ms
+        │  cache miss → pipeline abaixo
         ▼
 Ollama qwen2.5-coder:7b  (local, ~5s cold start)
         │  {:ok, "SELECT platform, SUM(revenue)/SUM(spend) AS roas ..."}
@@ -331,9 +529,17 @@ Eventos são emitidos via `Phoenix.PubSub` no tópico `"telemetry"` — o LiveVi
 
 Validação SQL, Z-Score e Adstock são **CPU-bound puras**: sem I/O, sem concorrência, execução em microsegundos. NIFs `DirtyCpu` executam em threads separadas sem tocar os schedulers da BEAM.
 
+### Por que Redis para cache de queries NL→SQL?
+
+Uma pergunta como "qual o CPA?" invoca LLM + Guardrail Rust + SQLite (~5s total). Com Redis cache-aside e TTL de 5 minutos, hits custam <10ms. O fallback gracioso garante que Redis indisponível não quebra o pipeline principal — a requisição segue normalmente.
+
+### Por que GraphQL além de REST?
+
+CMOs precisam de subconjuntos específicos de métricas — REST retorna tudo (over-fetching). GraphQL resolve isso nativamente com field selection. As subscriptions Absinthe permitem que dashboards externos recebam alertas Sentinel via WebSocket sem polling. Os endpoints REST existentes não foram alterados.
+
 ### Por que `calculate_adstock` em Rust e não Elixir?
 
-O Adstock é um loop iterativo (cada período depende do anterior). Em Elixir puro, recursão sobre listas de ~30 elementos é trivial — mas com sliders interativos no LiveView (dezenas de recalculos por segundo), ter o cálculo em Rust garante que nenhum scheduler seja bloqueado enquanto o usuário arrasta os controles.
+O Adstock é um loop iterativo (cada período depende do anterior). Em Elixir puro, recursão sobre listas de ~30 elementos é trivial — mas com sliders interativos no LiveView (dezenas de recálculos por segundo), ter o cálculo em Rust garante que nenhum scheduler seja bloqueado enquanto o usuário arrasta os controles.
 
 ### Por que TelemetryStore usa ETS e não Postgres?
 
@@ -351,8 +557,20 @@ Dados de campanha são **confidenciais**. Enviar queries SQL com nomes de campan
 
 ## 🧪 Testes
 
+### Via Docker (recomendado)
+
 ```bash
-mix test
+docker compose run --rm \
+  -e MIX_ENV=test \
+  app sh -c "mix deps.get && mix test --trace"
+```
+
+### Local (com Elixir + Rust instalados)
+
+```bash
+mix test --trace
+mix format --check-formatted
+cargo clippy --manifest-path native/aegis_core/Cargo.toml -- -D warnings
 ```
 
 | Módulo | O que é testado |
@@ -363,11 +581,12 @@ mix test
 
 ---
 
-## 🚀 Execução Local
+## 🚀 Execução Local (sem Docker)
 
 ### Pré-requisitos
-- Elixir 1.16 + Erlang/OTP 26 ([asdf](https://asdf-vm.com))
-- Rust 1.75+ ([rustup](https://rustup.rs))
+- Elixir 1.16+ + Erlang/OTP 26+ ([asdf](https://asdf-vm.com))
+- Rust stable ([rustup](https://rustup.rs))
+- Redis 7+ — `sudo apt install redis-server` ou `brew install redis`
 - Ollama ([ollama.ai](https://ollama.ai)) — **opcional**, tem fallback automático
 
 ```bash
@@ -381,38 +600,22 @@ iex -S mix phx.server
 
 Acesse: **http://localhost:4000**
 
-### Verificação rápida dos endpoints
-
-```bash
-# Health check
-curl http://localhost:4000/api/health
-
-# Métricas com KPIs (filtro por plataforma)
-curl 'http://localhost:4000/api/v1/campaigns/metrics?platform=google'
-
-# Pergunta em linguagem natural
-curl -X POST http://localhost:4000/api/v1/insights/query \
-  -H 'Content-Type: application/json' \
-  -d '{"question": "qual campanha tem melhor CPA?"}'
-
-# Testar bloqueio do guardrail
-curl -X POST http://localhost:4000/api/v1/insights/query \
-  -H 'Content-Type: application/json' \
-  -d '{"sql": "DROP TABLE campaign_metrics"}'
-```
-
 ---
 
 ## 📂 Estrutura
 
 ```
 uncover-aegis-nif/
+├── Dockerfile                             # Build multi-stage (Rust + Elixir → release OTP)
+├── docker-compose.yml                     # Redis 7 + Phoenix + volumes persistentes
+├── fly.toml                               # Deploy Fly.io — região GRU (São Paulo)
 ├── lib/
 │   ├── uncover_aegis/
-│   │   ├── insights.ex                    # Pipeline NL→SQL→Guardrail→Banco
+│   │   ├── insights.ex                    # Pipeline NL→SQL→Cache→Guardrail→Banco
 │   │   ├── insights/
 │   │   │   ├── llm_mock.ex                # Fallback offline (perguntas fixas)
-│   │   │   └── ollama_client.ex           # HTTP/1.1 via :gen_tcp puro
+│   │   │   ├── ollama_client.ex           # HTTP/1.1 via :gen_tcp puro
+│   │   │   └── query_cache.ex             # Cache-aside Redis (TTL 5 min)
 │   │   ├── sentinel/
 │   │   │   ├── campaign_monitor.ex        # GenServer por campanha (Z-Score)
 │   │   │   └── dynamic_supervisor.ex      # Supervisão de monitores em runtime
@@ -425,6 +628,8 @@ uncover-aegis-nif/
 │       │   ├── health_controller.ex        # GET /api/health
 │       │   ├── insights_controller.ex      # POST /api/v1/insights/query
 │       │   └── metrics_controller.ex       # GET /api/v1/campaigns/metrics
+│       ├── graphql/
+│       │   └── schema.ex                   # Schema Absinthe (queries + subscriptions)
 │       ├── live/
 │       │   └── insights_live.ex            # LiveView 5 abas (CMO Copilot)
 │       ├── plugs/                          # Plugs customizados
@@ -434,8 +639,11 @@ uncover-aegis-nif/
 │   └── uncover_aegis/
 │       ├── native_test.exs                 # Guardrail + Adstock Rust
 │       ├── insights_test.exs               # Pipeline completo
-│       └── sentinel_test.exs               # CampaignMonitor
+│       └── sentinel_test.exs              # CampaignMonitor
 ├── priv/repo/seeds.exs                     # 24 registros realistas de MarTech
+├── .github/workflows/
+│   ├── ci.yml                             # Elixir 1.16/1.17 × OTP 26/27 + Clippy
+│   └── cd.yml                             # Build GHCR → fly deploy (gru)
 └── ROADMAP.md                              # Próximos MVPs
 ```
 
@@ -446,7 +654,7 @@ uncover-aegis-nif/
 Ver [ROADMAP.md](ROADMAP.md) para detalhes. Próximos passos planejados:
 
 - **MVP 5** — Export de relatórios MMM (CSV/PDF) com assinatura digital
-- **MVP 6** — Multi-tenant com isolamento por organização via Row-Level Security
+- **MVP 6** — Multi-tenant com isolamento por organização via Row-Level Security + `phoenix_pubsub_redis` para cluster Phoenix
 - **ROAS** — Coluna `revenue` na tabela de métricas + suporte via NL
 
 ---

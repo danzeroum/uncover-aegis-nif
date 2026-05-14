@@ -2,9 +2,9 @@
 # Compila aegis_core (Rust/Cargo via Rustler) + release Phoenix OTP
 FROM hexpm/elixir:1.17.3-erlang-27.2-debian-bookworm-20241202-slim AS builder
 
-# hadolint ignore=DL3008
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# hadolint ignore=DL3008
 RUN apt-get update -y && \
     apt-get install -y --no-install-recommends \
       build-essential \
